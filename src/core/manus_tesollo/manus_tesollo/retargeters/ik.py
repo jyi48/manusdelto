@@ -55,7 +55,11 @@ class IKRetargeter(Retargeter):
         self._ema = {"left": EMAFilter(ema_alpha), "right": EMAFilter(ema_alpha)}
 
     def compute(self, msg, q_deg, side):
-        seed = self._seed.compute(msg, q_deg, side)
+        # Unfiltered: this class's own EMA below is the only smoothing stage.
+        # Using seed.compute() (which is itself EMA-filtered) would smooth the
+        # CLIK seed and the final output with two independent filter states,
+        # compounding into far more lag than ema_alpha alone implies.
+        seed = self._seed.compute_unfiltered(msg, q_deg, side)
         result = seed
         # Mirror mode (glove side != robot side): the extracted tip positions
         # come from the opposite-hand glove, which is the chiral mirror of the
