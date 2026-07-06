@@ -1,0 +1,26 @@
+retargeting:
+  type: DexPilot
+  # dex-only retarget variant: PIP/DIP lower bound pinned to 0 (thumb upper 0)
+  # so the optimizer can't drive fingers backward. Base dg5f_left.urdf is the
+  # true hardware description; only dex uses this constrained copy.
+  urdf_path: dg5f_left_retarget.urdf
+
+  # All 20 revolute joints, in DG5F command order (finger 1=thumb .. 5=pinky,
+  # joint 1..4 proximal->distal). Output qpos is reordered to this order in dex.py.
+  target_joint_names: [
+    'lj_dg_1_1', 'lj_dg_1_2', 'lj_dg_1_3', 'lj_dg_1_4',
+    'lj_dg_2_1', 'lj_dg_2_2', 'lj_dg_2_3', 'lj_dg_2_4',
+    'lj_dg_3_1', 'lj_dg_3_2', 'lj_dg_3_3', 'lj_dg_3_4',
+    'lj_dg_4_1', 'lj_dg_4_2', 'lj_dg_4_3', 'lj_dg_4_4',
+    'lj_dg_5_1', 'lj_dg_5_2', 'lj_dg_5_3', 'lj_dg_5_4',
+  ]
+
+  # Robot wrist/palm root and the five fingertips (thumb, index, middle, ring, pinky).
+  wrist_link_name: "ll_dg_palm"
+  finger_tip_link_names: [ "ll_dg_1_tip", "ll_dg_2_tip", "ll_dg_3_tip", "ll_dg_4_tip", "ll_dg_5_tip" ]
+
+  # Human->robot hand size ratio. Tune on hardware.
+  scaling_factor: 1.2
+
+  # Smaller alpha = stronger low-pass smoothing (more latency).
+  low_pass_alpha: 0.2
