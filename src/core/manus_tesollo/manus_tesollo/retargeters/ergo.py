@@ -246,6 +246,14 @@ class ErgoRetargeter(Retargeter):
         self._calib_samples = {"left": [], "right": []}
 
     def compute(self, msg, q_deg, side):
+        qd = self.compute_unfiltered(msg, q_deg, side)
+        return self._ema[side].filter(qd)
+
+    def compute_unfiltered(self, msg, q_deg, side):
+        """Same as compute(), but without this retargeter's own EMA step.
+
+        ik uses this for its CLIK seed/fallback so the seed isn't smoothed
+        twice (once here, once by ik's own EMA on its final output)."""
         if q_deg is None:
             q_deg = [0.0] * N
         q_deg = (list(q_deg) + [0.0] * N)[:N]
@@ -263,8 +271,7 @@ class ErgoRetargeter(Retargeter):
         qd = _compute_qd(q_deg, side, self._calib)
 
         lo_hi = self._limits_arr[side]
-        qd = [_clamp(qd[i], lo_hi[i][0], lo_hi[i][1]) for i in range(N)]
-        return self._ema[side].filter(qd)
+        return [_clamp(qd[i], lo_hi[i][0], lo_hi[i][1]) for i in range(N)]
 
     # ── Calibration control (driven by the node's calibrate service) ──────────
 
