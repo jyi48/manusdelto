@@ -1,0 +1,20 @@
+# ROS2 colcon artifacts
+/build/
+/install/
+/log/
+*/build/*
+*/install/*
+*/log/*
+
+# ManusSDK binary — too large for git, copy manually to workspace root.
+# See src/input/manus_ros2/DEVELOPER.ko.md for the ManusSDK/ layout.
+/ManusSDK/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Editors
+.idea/
+.vscode/
