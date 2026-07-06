@@ -245,6 +245,15 @@ class ErgoRetargeter(Retargeter):
         self._calib_phase = {"left": 0, "right": 0}  # 0=idle, 1=capturing rest, 2=capturing fist
         self._calib_samples = {"left": [], "right": []}
 
+    def set_calib(self, values):
+        """Live-replace the per-joint calibration factors (shared by both
+        sides). self._calib is read fresh each compute() call, so this
+        applies on the very next frame -- no rebuild needed."""
+        values = list(values)
+        if len(values) != N:
+            raise ValueError(f"expected {N} calib values, got {len(values)}")
+        self._calib = values
+
     def compute(self, msg, q_deg, side):
         qd = self.compute_unfiltered(msg, q_deg, side)
         return self._ema[side].filter(qd)

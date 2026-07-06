@@ -82,6 +82,23 @@ class DexRetargeter(Retargeter):
                 f"dex[{optimizer}] {side}: {len(dex_names)} target joints"
             )
 
+    def set_scaling(self, value):
+        """Live-adjust the human->robot scale on both sides. optimizer.scaling
+        is a plain attribute read fresh each retarget() call, so this applies
+        on the very next frame -- no rebuild needed."""
+        value = float(value)
+        for rt in self._retgt.values():
+            rt.optimizer.scaling = value
+
+    def set_low_pass_alpha(self, value):
+        """Live-adjust the low-pass filter alpha on both sides (0=frozen,
+        1=raw). Same live-attribute mechanism as set_scaling(); a no-op if a
+        side's config had low_pass_alpha outside [0, 1] (no filter built)."""
+        value = float(value)
+        for rt in self._retgt.values():
+            if rt.filter is not None:
+                rt.filter.alpha = value
+
     def compute(self, msg, q_deg, side):
         rt = self._retgt.get(side)
         if rt is None:

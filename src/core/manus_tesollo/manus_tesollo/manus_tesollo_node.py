@@ -6,6 +6,7 @@ import rclpy
 from rclpy.node import Node
 from control_msgs.msg import MultiDOFCommand
 from manus_ros2_msgs.msg import ManusGlove
+from rcl_interfaces.msg import SetParametersResult
 from std_msgs.msg import String
 from std_srvs.srv import SetBool, Trigger
 
@@ -179,6 +180,17 @@ class ManusTesolloNode(Node):
         self._calib_timer = None
         self.create_service(Trigger, "/manus_tesollo/calibrate", self._srv_calibrate)
 
+        # Live-tunable knobs, exposed via the node's standard parameter
+        # service (rcl_interfaces/SetParameters -- every rclpy node has one
+        # at ~/set_parameters, no custom service needed). Applied immediately
+        # to the already-built retargeter instances; see set_scaling/
+        # set_low_pass_alpha/set_calib -- these mutate plain attributes the
+        # retargeters re-read every frame, so no restart is needed.
+        self.declare_parameter("dex_scaling_factor", 1.2)
+        self.declare_parameter("dex_low_pass_alpha", 0.2)
+        self.declare_parameter("ergo_calib", list(DEFAULT_JOINT_CALIB))
+        self.add_on_set_parameters_callback(self._on_param_change)
+
         self.get_logger().info(f"left  {left_in} -> {left_out}")
         self.get_logger().info(f"right {right_in} -> {right_out}")
         self.get_logger().info(f"mode: {self._mode}")
@@ -241,6 +253,34 @@ class ManusTesolloNode(Node):
             return
         self._mode = mode
         self.get_logger().info(f"retarget_mode -> {self._mode}")
+
+    def _on_param_change(self, params):
+        """Push live-tunable params into the already-built retargeter
+        instances. dex_scaling_factor/dex_low_pass_alpha apply to both dex
+        variants ('dex' and 'dex_vector') uniformly -- they're independent
+        DexRetargeter instances (one per optimizer), not two views of one."""
+        for p in params:
+            if p.name == "dex_scaling_factor":
+                for name in ("dex", "dex_vector"):
+                    rt = self._retargeters.get(name)
+                    if rt is not None:
+                        rt.set_scaling(p.value)
+                self.get_logger().info(f"dex_scaling_factor -> {p.value}")
+            elif p.name == "dex_low_pass_alpha":
+                for name in ("dex", "dex_vector"):
+                    rt = self._retargeters.get(name)
+                    if rt is not None:
+                        rt.set_low_pass_alpha(p.value)
+                self.get_logger().info(f"dex_low_pass_alpha -> {p.value}")
+            elif p.name == "ergo_calib":
+                if len(p.value) != 20:
+                    return SetParametersResult(
+                        successful=False,
+                        reason=f"ergo_calib needs exactly 20 values, got {len(p.value)}",
+                    )
+                self._retargeters["ergo"].set_calib(p.value)
+                self.get_logger().info("ergo_calib updated")
+        return SetParametersResult(successful=True)
 
     def _cb_pause(self, req: SetBool.Request, res: SetBool.Response):
         self._paused = req.data

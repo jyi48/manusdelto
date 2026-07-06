@@ -17,13 +17,16 @@ import time
 
 import rclpy
 from rclpy.node import Node
+from rcl_interfaces.msg import Parameter as RosParameter, ParameterType, ParameterValue
+from rcl_interfaces.srv import SetParameters
 from std_msgs.msg import String
 from std_srvs.srv import SetBool, Trigger
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QApplication, QButtonGroup, QCheckBox, QGroupBox, QHBoxLayout, QLabel,
-    QProgressBar, QPushButton, QRadioButton, QVBoxLayout, QWidget,
+    QApplication, QButtonGroup, QCheckBox, QDoubleSpinBox, QGridLayout,
+    QGroupBox, QHBoxLayout, QLabel, QProgressBar, QPushButton, QRadioButton,
+    QVBoxLayout, QWidget,
 )
 
 # Must match manus_tesollo_node.CALIB_PHASE_SEC.
@@ -32,6 +35,19 @@ CALIB_PHASE_MSGS = {
     1: 'Phase 1/2: Open hand fully and hold (rest pose)...',
     2: 'Phase 2/2: Make a fist and hold...',
 }
+
+# Must match manus_tesollo_node's declared defaults (dex_scaling_factor,
+# dex_low_pass_alpha) and retargeters/ergo.py's DEFAULT_JOINT_CALIB.
+DEX_SCALING_DEFAULT = 1.2
+DEX_LOW_PASS_ALPHA_DEFAULT = 0.2
+ERGO_CALIB_DEFAULT = [
+    1.0, 1.6, 1.3, 1.3,   # thumb
+    1.0, 1.0, 1.3, 1.7,   # index
+    1.0, 1.0, 1.3, 1.7,   # middle
+    1.0, 1.0, 1.3, 1.7,   # ring
+    1.0, 1.0, 1.0, 1.0,   # pinky
+]
+ERGO_CALIB_FINGERS = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky']
 
 
 class ManusDeltoGuiNode(Node):
@@ -42,6 +58,11 @@ class ManusDeltoGuiNode(Node):
         self._pub_mirror = self.create_publisher(String, '/teleop/mirror_mode', 10)
         self._cli_pause = self.create_client(SetBool, '/manus_tesollo/pause')
         self._cli_calib = self.create_client(Trigger, '/manus_tesollo/calibrate')
+        # Live-tunable knobs (dex scaling/alpha, ergo calib) go through the
+        # node's standard parameter service -- every rclpy node exposes one
+        # at ~/set_parameters, no custom srv needed on manus_tesollo's side.
+        self._cli_set_param = self.create_client(
+            SetParameters, '/manus_tesollo/set_parameters')
 
     def _call_async(self, client, request, done_cb=None, timeout_sec=5.0):
         """Fire-and-poll a service call on a background thread; done_cb runs
@@ -78,6 +99,47 @@ class ManusDeltoGuiNode(Node):
         req = SetBool.Request()
         req.data = enable
         self._call_async(self._cli_pause, req, done_cb)
+
+    def call_set_param(self, name: str, value, done_cb=None):
+        """Set one parameter on manus_tesollo via its standard parameter
+        service. `value` a list/tuple -> PARAMETER_DOUBLE_ARRAY (ergo_calib),
+        otherwise -> PARAMETER_DOUBLE (dex_scaling_factor/dex_low_pass_alpha)."""
+        pv = ParameterValue()
+        if isinstance(value, (list, tuple)):
+            pv.type = ParameterType.PARAMETER_DOUBLE_ARRAY
+            pv.double_array_value = [float(v) for v in value]
+        else:
+            pv.type = ParameterType.PARAMETER_DOUBLE
+            pv.double_value = float(value)
+        p = RosParameter()
+        p.name = name
+        p.value = pv
+        req = SetParameters.Request()
+        req.parameters = [p]
+
+        def _run():
+            if not self._cli_set_param.wait_for_service(timeout_sec=2.0):
+                if done_cb:
+                    done_cb(False, 'set_parameters service not available')
+                return
+            fut = self._cli_set_param.call_async(req)
+            deadline = time.monotonic() + 5.0
+            while not fut.done():
+                if time.monotonic() > deadline:
+                    if done_cb:
+                        done_cb(False, 'timeout')
+                    return
+                time.sleep(0.02)
+            try:
+                result = fut.result()
+                ok = all(r.successful for r in result.results)
+                reason = next((r.reason for r in result.results if not r.successful), '')
+                if done_cb:
+                    done_cb(ok, reason)
+            except Exception as e:
+                if done_cb:
+                    done_cb(False, str(e))
+        threading.Thread(target=_run, daemon=True).start()
 
     def call_calibrate(self, done_cb=None):
         self._call_async(self._cli_calib, Trigger.Request(), done_cb)
@@ -147,12 +209,81 @@ class ManusDeltoGuiWindow(QWidget):
         calib_col.addWidget(self._lbl_calib)
         root.addWidget(calib_box)
 
+        # ── Dex live tuning (scaling / low-pass alpha) ─────────────────────
+        # Applies to both 'dex' and 'dex_vector' immediately (no restart) via
+        # manus_tesollo's standard parameter service.
+        dex_box = QGroupBox('Dex Tuning (dex + dex_vector, live)')
+        dex_row = QHBoxLayout(dex_box)
+        dex_row.addWidget(QLabel('Scaling:'))
+        self._spin_dex_scaling = QDoubleSpinBox()
+        self._spin_dex_scaling.setRange(0.5, 3.0)
+        self._spin_dex_scaling.setSingleStep(0.05)
+        self._spin_dex_scaling.setValue(DEX_SCALING_DEFAULT)
+        self._spin_dex_scaling.valueChanged.connect(
+            lambda v: self._node.call_set_param('dex_scaling_factor', v))
+        dex_row.addWidget(self._spin_dex_scaling)
+        dex_row.addWidget(QLabel('Low-pass alpha:'))
+        self._spin_dex_alpha = QDoubleSpinBox()
+        self._spin_dex_alpha.setRange(0.0, 1.0)
+        self._spin_dex_alpha.setSingleStep(0.05)
+        self._spin_dex_alpha.setValue(DEX_LOW_PASS_ALPHA_DEFAULT)
+        self._spin_dex_alpha.valueChanged.connect(
+            lambda v: self._node.call_set_param('dex_low_pass_alpha', v))
+        dex_row.addWidget(self._spin_dex_alpha)
+        dex_row.addStretch()
+        root.addWidget(dex_box)
+
+        # ── Ergo calibration factors (20, per-joint, live) ─────────────────
+        ergo_box = QGroupBox('Ergo Calibration Factors (live)')
+        ergo_col = QVBoxLayout(ergo_box)
+        grid = QGridLayout()
+        for col in range(4):
+            grid.addWidget(QLabel(f'j{col + 1}'), 0, col + 1)
+        self._spin_ergo_calib = []
+        for row, finger in enumerate(ERGO_CALIB_FINGERS):
+            grid.addWidget(QLabel(finger), row + 1, 0)
+            for col in range(4):
+                i = row * 4 + col
+                sb = QDoubleSpinBox()
+                sb.setRange(0.0, 3.0)
+                sb.setSingleStep(0.05)
+                sb.setValue(ERGO_CALIB_DEFAULT[i])
+                grid.addWidget(sb, row + 1, col + 1)
+                self._spin_ergo_calib.append(sb)
+        ergo_col.addLayout(grid)
+        ergo_btn_row = QHBoxLayout()
+        btn_apply_calib = QPushButton('Apply')
+        btn_apply_calib.clicked.connect(self._on_apply_ergo_calib)
+        ergo_btn_row.addWidget(btn_apply_calib)
+        btn_reset_calib = QPushButton('Reset to Default')
+        btn_reset_calib.clicked.connect(self._on_reset_ergo_calib)
+        ergo_btn_row.addWidget(btn_reset_calib)
+        ergo_btn_row.addStretch()
+        ergo_col.addLayout(ergo_btn_row)
+        self._lbl_ergo_calib_status = QLabel('')
+        ergo_col.addWidget(self._lbl_ergo_calib_status)
+        root.addWidget(ergo_box)
+
         root.addStretch()
-        self.resize(420, 320)
+        self.resize(480, 620)
 
     def _on_pause_toggled(self, checked: bool):
         self._node.call_pause(checked)
         self._btn_pause.setText('▶ Resume Stream' if checked else '⏸ Pause Stream')
+
+    def _on_apply_ergo_calib(self):
+        values = [sb.value() for sb in self._spin_ergo_calib]
+
+        def done(ok, msg):
+            text = 'Applied' if ok else f'FAILED: {msg}'
+            self._sig.dispatch.emit(lambda: self._lbl_ergo_calib_status.setText(text))
+
+        self._node.call_set_param('ergo_calib', values, done)
+
+    def _on_reset_ergo_calib(self):
+        for sb, v in zip(self._spin_ergo_calib, ERGO_CALIB_DEFAULT):
+            sb.setValue(v)
+        self._on_apply_ergo_calib()
 
     def _on_calib_status(self, text: str):
         self._lbl_calib.setText(f'Status: {text}')
