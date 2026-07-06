@@ -107,12 +107,14 @@ class DexRetargeter(Retargeter):
                 )
                 return None
 
-        joint_pos = mano @ wrist_rot @ self._op2mano[side]
-
-        # Mirror mode (glove side != robot side): op2mano[side] is keyed on the
-        # ROBOT side while the keypoints come from the opposite glove, so the
-        # chirality won't match. If mirror feels wrong on hardware, reflect
-        # joint_pos across one axis before building ref_value.
+        # op2mano corrects the chirality of the physical glove the keypoints
+        # came from (like the reference SingleHandDetector, which keys its
+        # operator2mano on the camera-detected hand, not a target robot). In
+        # mirror mode `side` is the target ROBOT hand and differs from the
+        # glove's own side, so this must use msg.side (the glove), not `side`
+        # (which only selects which DG5F URDF/joint set `rt` solves for).
+        glove_side = (msg.side or side).lower()
+        joint_pos = mano @ wrist_rot @ self._op2mano[glove_side]
         idx = rt.optimizer.target_link_human_indices  # (2, n_vec): [origin; task]
         ref_value = joint_pos[idx[1], :] - joint_pos[idx[0], :]
         t0 = time.perf_counter()
