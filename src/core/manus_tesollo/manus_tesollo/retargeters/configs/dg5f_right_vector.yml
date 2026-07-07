@@ -16,28 +16,28 @@ retargeting:
 
   # Vector families:
   #   A. palm -> fingertip  (tip position, like DexPilot)          [5 vectors]
-  #   B. MCP  -> DIP         (distal-segment DIRECTION)             [5 vectors]
+  #   B. MCP  -> DIP         (distal-segment DIRECTION, fingers)    [4 vectors]
+  #   B'. thumb rl_dg_1_2 -> rl_dg_1_3 (thumb PROXIMAL direction)  [1 vector]
   #   C. palm -> thumb rl_dg_1_2  (thumb BASE direction)           [1 vector]
-  #   D. thumb rl_dg_1_3 -> rl_dg_1_tip (thumb DISTAL direction)   [1 vector]
+  #   D. thumb rl_dg_1_3 -> rl_dg_1_tip (thumb DISTAL direction)   [2 vectors, weighted]
   #
-  # C is the abduction/opposition fix. Family B's thumb vector (rl_dg_1_2 ->
-  # rl_dg_1_4) sits ENTIRELY past joints 1_1 (abduction) and 1_2 (opposition),
-  # so nothing in A+B forces the solver to use them -- the thumb reaches the tip
-  # with pure curl (1_3/1_4) and the base stays straight, giving the "L-shape".
-  # C spans palm -> rl_dg_1_2 (the link after 1_1 and 1_2), so matching its
-  # direction to the human wrist->thumb-MCP direction REQUIRES abduction +
-  # opposition.
+  # C is the abduction/opposition fix: it spans palm -> rl_dg_1_2 (past joints
+  # 1_1 abduction and 1_2 opposition), so matching the human wrist->thumb-MCP
+  # direction REQUIRES those two joints -- fixes the "L-shape" base.
   #
-  # D is the curl-distribution fix. With only A+B+C the thumb has no direction
-  # target for the DISTAL phalanx (joint 1_4): A (tip position) is reachable
-  # with 1_3 alone, and B maps the 1_3+1_4 span to the human's proximal segment
-  # (2->3), so all curl piles into 1_3 -- PIP over-bends, DIP stays straight. D
-  # spans rl_dg_1_3 -> rl_dg_1_tip (joint 1_4 only) matched to the human distal
-  # phalanx (3->4), giving 1_4 its own target so the curl splits across 1_3/1_4.
+  # B'/D are the curl-distribution fix. Originally the thumb's B vector spanned
+  # rl_dg_1_2 -> rl_dg_1_4 (BOTH curl joints 1_3+1_4) but matched the human
+  # PROXIMAL segment (2->3), so it pinned the combined direction to a straight-
+  # ish proximal pose and FOUGHT any distal bend -- all curl piled into 1_3 (PIP
+  # over-bends, DIP straight). Split into: B' spans rl_dg_1_2 -> rl_dg_1_3 (joint
+  # 1_3 only, human proximal 2->3) and D spans rl_dg_1_3 -> rl_dg_1_tip (joint
+  # 1_4 only, human distal 3->4). Now each curl joint owns exactly one direction
+  # target with a matching human segment, so they stop fighting. D is duplicated
+  # (x2) to weight the distal bend harder, since 1_4 was very reluctant.
   #
-  # EXPERIMENTAL, manusdelto only. Library has no per-vector weight; to weight a
-  # vector harder, duplicate its entry across all four lists. To revert one
-  # family, delete its entry from each of the four lists below.
+  # EXPERIMENTAL, manusdelto only. Library has no per-vector weight; duplicate an
+  # entry across all four lists to weight it. To dial the distal bend up/down,
+  # add/remove a D copy; to revert a family, delete its entries.
   target_origin_link_names:
     - "rl_dg_palm"
     - "rl_dg_palm"
@@ -51,25 +51,27 @@ retargeting:
     - "rl_dg_5_2"
     - "rl_dg_palm"      # C: thumb base
     - "rl_dg_1_3"       # D: thumb distal
+    - "rl_dg_1_3"       # D: thumb distal (weight x2)
   target_task_link_names:
     - "rl_dg_1_tip"
     - "rl_dg_2_tip"
     - "rl_dg_3_tip"
     - "rl_dg_4_tip"
     - "rl_dg_5_tip"
-    - "rl_dg_1_4"
+    - "rl_dg_1_3"       # B': thumb proximal (was rl_dg_1_4)
     - "rl_dg_2_4"
     - "rl_dg_3_4"
     - "rl_dg_4_4"
     - "rl_dg_5_4"
     - "rl_dg_1_2"       # C: thumb base
     - "rl_dg_1_tip"     # D: thumb distal
+    - "rl_dg_1_tip"     # D: thumb distal (weight x2)
   # Human (MANO) keypoint indices for each vector: [origins; tasks].
-  #   origins: wrist x5, thumb MCP / finger PIP knuckles x5, wrist (C), thumb PIP (D)
-  #   tasks:   tip x5,   thumb IP / finger DIP joints x5,    thumb MCP (C), thumb tip (D)
+  #   origins: wrist x5, thumb MCP / finger PIP knuckles x5, wrist (C), thumb PIP (D x2)
+  #   tasks:   tip x5,   thumb PIP / finger DIP joints x5,   thumb MCP (C), thumb tip (D x2)
   target_link_human_indices:
-    - [0, 0, 0, 0, 0, 2, 6, 10, 14, 18, 0, 3]
-    - [4, 8, 12, 16, 20, 3, 7, 11, 15, 19, 2, 4]
+    - [0, 0, 0, 0, 0, 2, 6, 10, 14, 18, 0, 3, 3]
+    - [4, 8, 12, 16, 20, 3, 7, 11, 15, 19, 2, 4, 4]
 
   scaling_factor: 1.2
   low_pass_alpha: 0.2
