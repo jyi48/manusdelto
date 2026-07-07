@@ -186,10 +186,10 @@ class ManusTesolloNode(Node):
         # to the already-built retargeter instances; see set_scaling/
         # set_low_pass_alpha/set_calib -- these mutate plain attributes the
         # retargeters re-read every frame, so no restart is needed.
-        self.declare_parameter("dex_scaling_factor", 1.2)
-        self.declare_parameter("dex_low_pass_alpha", 0.2)
+        self.declare_parameter("dex_scaling_factor", 1.1)
+        self.declare_parameter("dex_low_pass_alpha", 0.1)
         self.declare_parameter("ergo_calib", list(DEFAULT_JOINT_CALIB))
-        self.declare_parameter("mirror_reflect_axis", "none")
+        self.declare_parameter("mirror_reflect_axis", "x")
         self.add_on_set_parameters_callback(self._on_param_change)
 
         self.get_logger().info(f"left  {left_in} -> {left_out}")

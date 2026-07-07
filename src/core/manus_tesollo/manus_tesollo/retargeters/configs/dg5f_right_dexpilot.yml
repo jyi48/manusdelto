@@ -19,8 +19,22 @@ retargeting:
   wrist_link_name: "rl_dg_palm"
   finger_tip_link_names: [ "rl_dg_1_tip", "rl_dg_2_tip", "rl_dg_3_tip", "rl_dg_4_tip", "rl_dg_5_tip" ]
 
-  # Human->robot hand size ratio. Tune on hardware.
-  scaling_factor: 1.2
+  # Human->robot hand size ratio. Hardware-tuned (2026-07-07); was 1.2. GUI's
+  # Dex Tuning box can override this live -- this is just the starting value.
+  scaling_factor: 1.1
 
-  # Smaller alpha = stronger low-pass smoothing (more latency).
-  low_pass_alpha: 0.2
+  # Smaller alpha = stronger low-pass smoothing (more latency). Hardware-tuned
+  # (2026-07-07); was 0.2.
+  low_pass_alpha: 0.1
+
+  # EXPERIMENTAL (manusdelto only, not ported to teleop): DexPilot's pinch-prior
+  # distance thresholds (library defaults 0.03/0.05). Between escape_dist and
+  # project_dist, a fingertip pair (e.g. thumb-index) gets pulled together more
+  # aggressively than plain least-squares would. This is NOT a direct fix for
+  # thumb joint 1/2 usage -- scaling_factor/low_pass_alpha don't touch this at
+  # all, and this only fires when two tips are already fairly close (pinch-like
+  # poses), not general open-hand fold. Tightened here as a first bench
+  # experiment; revert to defaults (comment out both lines) if it doesn't help
+  # or overshoots on other fingers.
+  project_dist: 0.02
+  escape_dist: 0.03

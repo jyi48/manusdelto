@@ -37,13 +37,24 @@ CALIB_PHASE_MSGS = {
 }
 
 # Must match manus_tesollo_node's declared defaults (dex_scaling_factor,
-# dex_low_pass_alpha) and retargeters/ergo.py's DEFAULT_JOINT_CALIB.
-DEX_SCALING_DEFAULT = 1.2
-DEX_LOW_PASS_ALPHA_DEFAULT = 0.2
+# dex_low_pass_alpha, mirror_reflect_axis) and retargeters/ergo.py's
+# DEFAULT_JOINT_CALIB. Hardware-tuned on this bench rig (2026-07-07).
+DEX_SCALING_DEFAULT = 1.1
+DEX_LOW_PASS_ALPHA_DEFAULT = 0.1
+MIRROR_AXIS_DEFAULT = 'x'
 ERGO_CALIB_DEFAULT = [
     1.0, 1.6, 1.3, 1.3,   # thumb
     1.0, 1.0, 1.3, 1.7,   # index
     1.0, 1.0, 1.3, 1.7,   # middle
+    1.0, 1.0, 1.3, 1.7,   # ring
+    1.0, 1.0, 1.0, 1.0,   # pinky
+]
+# Hardware-tuned preset (2026-07-07), selectable alongside the Tesollo
+# reference default above via "Load Tuned Preset".
+ERGO_CALIB_TUNED = [
+    1.75, 1.0, 1.3, 2.0,  # thumb
+    1.0, 1.2, 1.3, 1.3,   # index
+    1.0, 1.0, 1.1, 1.1,   # middle
     1.0, 1.0, 1.3, 1.7,   # ring
     1.0, 1.0, 1.0, 1.0,   # pinky
 ]
@@ -172,10 +183,18 @@ class ManusDeltoGuiWindow(QWidget):
         # ── Retarget mode ────────────────────────────────────────────────
         mode_box = QGroupBox('Retarget mode')
         mode_row = QHBoxLayout(mode_box)
+        # IK is disabled here (no production use, no mirror handling). Vector
+        # is kept selectable on manusdelto ONLY -- this bench rig is where the
+        # experimental thumb abduction/opposition fix (vector.yml family C) is
+        # being tuned. teleop's GUI has Vector commented out. Retargeters still
+        # build regardless; this just controls the GUI entry point.
         self._bg_mode = QButtonGroup(self)
         self._rb_modes = {}
-        for label, mode in (('Ergo', 'ergo'), ('IK', 'ik'),
-                            ('DexPilot', 'dex'), ('Vector', 'dex_vector')):
+        for label, mode in (('Ergo', 'ergo'),
+                            # ('IK', 'ik'),
+                            ('DexPilot', 'dex'),
+                            ('Vector', 'dex_vector'),
+                            ):
             rb = QRadioButton(label)
             self._bg_mode.addButton(rb)
             self._rb_modes[mode] = rb
@@ -202,6 +221,7 @@ class ManusDeltoGuiWindow(QWidget):
         stream_row.addWidget(QLabel('Mirror axis:'))
         self._combo_mirror_axis = QComboBox()
         self._combo_mirror_axis.addItems(['none', 'x', 'y', 'z'])
+        self._combo_mirror_axis.setCurrentText(MIRROR_AXIS_DEFAULT)
         self._combo_mirror_axis.currentTextChanged.connect(
             lambda a: self._node.call_set_param('mirror_reflect_axis', a))
         stream_row.addWidget(self._combo_mirror_axis)
@@ -270,6 +290,9 @@ class ManusDeltoGuiWindow(QWidget):
         btn_reset_calib = QPushButton('Reset to Default')
         btn_reset_calib.clicked.connect(self._on_reset_ergo_calib)
         ergo_btn_row.addWidget(btn_reset_calib)
+        btn_tuned_calib = QPushButton('Load Tuned Preset')
+        btn_tuned_calib.clicked.connect(self._on_load_tuned_ergo_calib)
+        ergo_btn_row.addWidget(btn_tuned_calib)
         ergo_btn_row.addStretch()
         ergo_col.addLayout(ergo_btn_row)
         self._lbl_ergo_calib_status = QLabel('')
@@ -294,6 +317,11 @@ class ManusDeltoGuiWindow(QWidget):
 
     def _on_reset_ergo_calib(self):
         for sb, v in zip(self._spin_ergo_calib, ERGO_CALIB_DEFAULT):
+            sb.setValue(v)
+        self._on_apply_ergo_calib()
+
+    def _on_load_tuned_ergo_calib(self):
+        for sb, v in zip(self._spin_ergo_calib, ERGO_CALIB_TUNED):
             sb.setValue(v)
         self._on_apply_ergo_calib()
 
