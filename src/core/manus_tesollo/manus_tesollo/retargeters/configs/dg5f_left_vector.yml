@@ -14,11 +14,20 @@ retargeting:
     'lj_dg_5_1', 'lj_dg_5_2', 'lj_dg_5_3', 'lj_dg_5_4',
   ]
 
-  # Two vector families per finger:
-  #   A. palm -> fingertip  (tip position, like DexPilot)
-  #   B. MCP  -> DIP         (proximal-segment DIRECTION) — this is what makes
-  #      the thumb/fingers actually FOLD instead of just reaching the tip, so
-  #      thumb opposition looks natural (DexPilot only constrains the tip).
+  # Vector families:
+  #   A. palm -> fingertip  (tip position, like DexPilot)          [5 vectors]
+  #   B. MCP  -> DIP         (distal-segment DIRECTION)             [5 vectors]
+  #   C. palm -> thumb ll_dg_1_2  (thumb BASE direction)           [1 vector]
+  #
+  # C is the abduction/opposition fix. Family B's thumb vector (ll_dg_1_2 ->
+  # ll_dg_1_4) sits ENTIRELY past joints 1_1 (abduction) and 1_2 (opposition),
+  # so nothing in A+B forces the solver to use them -- the thumb reaches the tip
+  # with pure curl (1_3/1_4) and the base stays straight, giving the "L-shape".
+  # C spans palm -> ll_dg_1_2 (the link after 1_1 and 1_2), so matching its
+  # direction to the human wrist->thumb-MCP direction REQUIRES abduction +
+  # opposition. EXPERIMENTAL, manusdelto only. To weight it harder (library has
+  # no per-vector weight), duplicate the C entry 2-3x across all four lists.
+  # To revert: delete the last entry from each of the four lists below.
   target_origin_link_names:
     - "ll_dg_palm"
     - "ll_dg_palm"
@@ -30,6 +39,7 @@ retargeting:
     - "ll_dg_3_2"
     - "ll_dg_4_2"
     - "ll_dg_5_2"
+    - "ll_dg_palm"      # C: thumb base
   target_task_link_names:
     - "ll_dg_1_tip"
     - "ll_dg_2_tip"
@@ -41,12 +51,13 @@ retargeting:
     - "ll_dg_3_4"
     - "ll_dg_4_4"
     - "ll_dg_5_4"
+    - "ll_dg_1_2"       # C: thumb base
   # Human (MANO) keypoint indices for each vector: [origins; tasks].
-  #   origins: wrist x5, then thumb MCP / finger PIP knuckles
-  #   tasks:   tip x5,   then thumb IP / finger DIP joints
+  #   origins: wrist x5, thumb MCP / finger PIP knuckles x5, wrist (C)
+  #   tasks:   tip x5,   thumb IP / finger DIP joints x5,    thumb MCP (C)
   target_link_human_indices:
-    - [0, 0, 0, 0, 0, 2, 6, 10, 14, 18]
-    - [4, 8, 12, 16, 20, 3, 7, 11, 15, 19]
+    - [0, 0, 0, 0, 0, 2, 6, 10, 14, 18, 0]
+    - [4, 8, 12, 16, 20, 3, 7, 11, 15, 19, 2]
 
   scaling_factor: 1.2
   low_pass_alpha: 0.2
