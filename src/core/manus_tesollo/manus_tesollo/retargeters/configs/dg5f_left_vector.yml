@@ -19,7 +19,7 @@ retargeting:
   #   B. MCP  -> DIP         (distal-segment DIRECTION, fingers)    [4 vectors]
   #   B'. thumb ll_dg_1_2 -> ll_dg_1_3 (thumb PROXIMAL direction)  [1 vector]
   #   C. palm -> thumb ll_dg_1_2  (thumb BASE direction)           [1 vector]
-  #   D. thumb ll_dg_1_3 -> ll_dg_1_tip (thumb DISTAL direction)   [2 vectors, weighted]
+  #   D. thumb ll_dg_1_3 -> ll_dg_1_tip (thumb DISTAL direction)   [1 vector]
   #
   # C is the abduction/opposition fix: it spans palm -> ll_dg_1_2 (past joints
   # 1_1 abduction and 1_2 opposition), so matching the human wrist->thumb-MCP
@@ -32,8 +32,8 @@ retargeting:
   # over-bends, DIP straight). Split into: B' spans ll_dg_1_2 -> ll_dg_1_3 (joint
   # 1_3 only, human proximal 2->3) and D spans ll_dg_1_3 -> ll_dg_1_tip (joint
   # 1_4 only, human distal 3->4). Now each curl joint owns exactly one direction
-  # target with a matching human segment, so they stop fighting. D is duplicated
-  # (x2) to weight the distal bend harder, since 1_4 was very reluctant.
+  # target with a matching human segment, so they stop fighting. (D was briefly
+  # duplicated x2 to force distal bend, but that over-flexed 1_4 -- back to x1.)
   #
   # EXPERIMENTAL, manusdelto only. Library has no per-vector weight; duplicate an
   # entry across all four lists to weight it. To dial the distal bend up/down,
@@ -51,7 +51,6 @@ retargeting:
     - "ll_dg_5_2"
     - "ll_dg_palm"      # C: thumb base
     - "ll_dg_1_3"       # D: thumb distal
-    - "ll_dg_1_3"       # D: thumb distal (weight x2)
   target_task_link_names:
     - "ll_dg_1_tip"
     - "ll_dg_2_tip"
@@ -65,13 +64,12 @@ retargeting:
     - "ll_dg_5_4"
     - "ll_dg_1_2"       # C: thumb base
     - "ll_dg_1_tip"     # D: thumb distal
-    - "ll_dg_1_tip"     # D: thumb distal (weight x2)
   # Human (MANO) keypoint indices for each vector: [origins; tasks].
-  #   origins: wrist x5, thumb MCP / finger PIP knuckles x5, wrist (C), thumb PIP (D x2)
-  #   tasks:   tip x5,   thumb PIP / finger DIP joints x5,   thumb MCP (C), thumb tip (D x2)
+  #   origins: wrist x5, thumb MCP / finger PIP knuckles x5, wrist (C), thumb PIP (D)
+  #   tasks:   tip x5,   thumb PIP / finger DIP joints x5,   thumb MCP (C), thumb tip (D)
   target_link_human_indices:
-    - [0, 0, 0, 0, 0, 2, 6, 10, 14, 18, 0, 3, 3]
-    - [4, 8, 12, 16, 20, 3, 7, 11, 15, 19, 2, 4, 4]
+    - [0, 0, 0, 0, 0, 2, 6, 10, 14, 18, 0, 3]
+    - [4, 8, 12, 16, 20, 3, 7, 11, 15, 19, 2, 4]
 
   scaling_factor: 1.2
   low_pass_alpha: 0.2
