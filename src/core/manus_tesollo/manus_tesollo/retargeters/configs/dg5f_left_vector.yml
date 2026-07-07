@@ -18,6 +18,7 @@ retargeting:
   #   A. palm -> fingertip  (tip position, like DexPilot)          [5 vectors]
   #   B. MCP  -> DIP         (distal-segment DIRECTION)             [5 vectors]
   #   C. palm -> thumb ll_dg_1_2  (thumb BASE direction)           [1 vector]
+  #   D. thumb ll_dg_1_3 -> ll_dg_1_tip (thumb DISTAL direction)   [1 vector]
   #
   # C is the abduction/opposition fix. Family B's thumb vector (ll_dg_1_2 ->
   # ll_dg_1_4) sits ENTIRELY past joints 1_1 (abduction) and 1_2 (opposition),
@@ -25,9 +26,18 @@ retargeting:
   # with pure curl (1_3/1_4) and the base stays straight, giving the "L-shape".
   # C spans palm -> ll_dg_1_2 (the link after 1_1 and 1_2), so matching its
   # direction to the human wrist->thumb-MCP direction REQUIRES abduction +
-  # opposition. EXPERIMENTAL, manusdelto only. To weight it harder (library has
-  # no per-vector weight), duplicate the C entry 2-3x across all four lists.
-  # To revert: delete the last entry from each of the four lists below.
+  # opposition.
+  #
+  # D is the curl-distribution fix. With only A+B+C the thumb has no direction
+  # target for the DISTAL phalanx (joint 1_4): A (tip position) is reachable
+  # with 1_3 alone, and B maps the 1_3+1_4 span to the human's proximal segment
+  # (2->3), so all curl piles into 1_3 -- PIP over-bends, DIP stays straight. D
+  # spans ll_dg_1_3 -> ll_dg_1_tip (joint 1_4 only) matched to the human distal
+  # phalanx (3->4), giving 1_4 its own target so the curl splits across 1_3/1_4.
+  #
+  # EXPERIMENTAL, manusdelto only. Library has no per-vector weight; to weight a
+  # vector harder, duplicate its entry across all four lists. To revert one
+  # family, delete its entry from each of the four lists below.
   target_origin_link_names:
     - "ll_dg_palm"
     - "ll_dg_palm"
@@ -40,6 +50,7 @@ retargeting:
     - "ll_dg_4_2"
     - "ll_dg_5_2"
     - "ll_dg_palm"      # C: thumb base
+    - "ll_dg_1_3"       # D: thumb distal
   target_task_link_names:
     - "ll_dg_1_tip"
     - "ll_dg_2_tip"
@@ -52,12 +63,13 @@ retargeting:
     - "ll_dg_4_4"
     - "ll_dg_5_4"
     - "ll_dg_1_2"       # C: thumb base
+    - "ll_dg_1_tip"     # D: thumb distal
   # Human (MANO) keypoint indices for each vector: [origins; tasks].
-  #   origins: wrist x5, thumb MCP / finger PIP knuckles x5, wrist (C)
-  #   tasks:   tip x5,   thumb IP / finger DIP joints x5,    thumb MCP (C)
+  #   origins: wrist x5, thumb MCP / finger PIP knuckles x5, wrist (C), thumb PIP (D)
+  #   tasks:   tip x5,   thumb IP / finger DIP joints x5,    thumb MCP (C), thumb tip (D)
   target_link_human_indices:
-    - [0, 0, 0, 0, 0, 2, 6, 10, 14, 18, 0]
-    - [4, 8, 12, 16, 20, 3, 7, 11, 15, 19, 2]
+    - [0, 0, 0, 0, 0, 2, 6, 10, 14, 18, 0, 3]
+    - [4, 8, 12, 16, 20, 3, 7, 11, 15, 19, 2, 4]
 
   scaling_factor: 1.2
   low_pass_alpha: 0.2
