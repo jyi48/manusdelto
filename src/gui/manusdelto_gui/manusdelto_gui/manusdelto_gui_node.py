@@ -24,9 +24,9 @@ from std_srvs.srv import SetBool, Trigger
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QApplication, QButtonGroup, QCheckBox, QDoubleSpinBox, QGridLayout,
-    QGroupBox, QHBoxLayout, QLabel, QProgressBar, QPushButton, QRadioButton,
-    QVBoxLayout, QWidget,
+    QApplication, QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBox,
+    QGridLayout, QGroupBox, QHBoxLayout, QLabel, QProgressBar, QPushButton,
+    QRadioButton, QVBoxLayout, QWidget,
 )
 
 # Must match manus_tesollo_node.CALIB_PHASE_SEC.
@@ -102,12 +102,15 @@ class ManusDeltoGuiNode(Node):
 
     def call_set_param(self, name: str, value, done_cb=None):
         """Set one parameter on manus_tesollo via its standard parameter
-        service. `value` a list/tuple -> PARAMETER_DOUBLE_ARRAY (ergo_calib),
-        otherwise -> PARAMETER_DOUBLE (dex_scaling_factor/dex_low_pass_alpha)."""
+        service. `value` a list/tuple -> DOUBLE_ARRAY (ergo_calib), str ->
+        STRING (mirror_reflect_axis), else -> DOUBLE (dex scaling/alpha)."""
         pv = ParameterValue()
         if isinstance(value, (list, tuple)):
             pv.type = ParameterType.PARAMETER_DOUBLE_ARRAY
             pv.double_array_value = [float(v) for v in value]
+        elif isinstance(value, str):
+            pv.type = ParameterType.PARAMETER_STRING
+            pv.string_value = value
         else:
             pv.type = ParameterType.PARAMETER_DOUBLE
             pv.double_value = float(value)
@@ -193,6 +196,15 @@ class ManusDeltoGuiWindow(QWidget):
         self._chk_mirror = QCheckBox('Mirror mode')
         self._chk_mirror.toggled.connect(self._node.set_mirror_mode)
         stream_row.addWidget(self._chk_mirror)
+        # Mirror reflection axis (dex/dex_vector only): fixes the residual
+        # single-axis flip in mirror mode. Try x/y/z on hardware to find the
+        # right one; 'none' = no reflection.
+        stream_row.addWidget(QLabel('Mirror axis:'))
+        self._combo_mirror_axis = QComboBox()
+        self._combo_mirror_axis.addItems(['none', 'x', 'y', 'z'])
+        self._combo_mirror_axis.currentTextChanged.connect(
+            lambda a: self._node.call_set_param('mirror_reflect_axis', a))
+        stream_row.addWidget(self._combo_mirror_axis)
         stream_row.addStretch()
         root.addWidget(stream_box)
 

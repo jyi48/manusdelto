@@ -189,6 +189,7 @@ class ManusTesolloNode(Node):
         self.declare_parameter("dex_scaling_factor", 1.2)
         self.declare_parameter("dex_low_pass_alpha", 0.2)
         self.declare_parameter("ergo_calib", list(DEFAULT_JOINT_CALIB))
+        self.declare_parameter("mirror_reflect_axis", "none")
         self.add_on_set_parameters_callback(self._on_param_change)
 
         self.get_logger().info(f"left  {left_in} -> {left_out}")
@@ -280,6 +281,18 @@ class ManusTesolloNode(Node):
                     )
                 self._retargeters["ergo"].set_calib(p.value)
                 self.get_logger().info("ergo_calib updated")
+            elif p.name == "mirror_reflect_axis":
+                axis = str(p.value).lower()
+                if axis not in ("none", "x", "y", "z"):
+                    return SetParametersResult(
+                        successful=False,
+                        reason=f"mirror_reflect_axis must be none/x/y/z, got '{axis}'",
+                    )
+                for name in ("dex", "dex_vector"):
+                    rt = self._retargeters.get(name)
+                    if rt is not None:
+                        rt.set_mirror_reflect(axis)
+                self.get_logger().info(f"mirror_reflect_axis -> {axis}")
         return SetParametersResult(successful=True)
 
     def _cb_pause(self, req: SetBool.Request, res: SetBool.Response):

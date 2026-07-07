@@ -49,6 +49,17 @@ _CMD_JOINTS = {
     for side, p in (("left", "l"), ("right", "r"))
 }
 
+# Mirror-mode reflection: op2mano[side] already gives the right mirror except
+# for a residual single-axis flip in the MANO frame. Reflecting joint_pos on
+# one axis fixes it; which axis depends on the Manus frame convention, so it's
+# a tunable (try x/y/z on hardware). Applied only when glove side != robot side.
+_MIRROR_REFLECT = {
+    "none": np.array([1.0, 1.0, 1.0]),
+    "x": np.array([-1.0, 1.0, 1.0]),
+    "y": np.array([1.0, -1.0, 1.0]),
+    "z": np.array([1.0, 1.0, -1.0]),
+}
+
 
 class DexRetargeter(Retargeter):
     name = "dex"
@@ -68,6 +79,7 @@ class DexRetargeter(Retargeter):
         self._optimizer = optimizer
 
         self._op2mano = MANUS_OPERATOR2MANO  # per-hand Manus VUH -> MANO
+        self._mirror_reflect = _MIRROR_REFLECT["none"]
         self._last_frame = {"left": None, "right": None}
         self._retgt = {}
         self._reorder = {}
@@ -81,6 +93,12 @@ class DexRetargeter(Retargeter):
             self._log.info(
                 f"dex[{optimizer}] {side}: {len(dex_names)} target joints"
             )
+
+    def set_mirror_reflect(self, axis):
+        """Live-set the mirror-mode reflection axis ('none'/'x'/'y'/'z').
+        Only applied when the glove side differs from the robot side."""
+        self._mirror_reflect = _MIRROR_REFLECT.get(str(axis).lower(),
+                                                   _MIRROR_REFLECT["none"])
 
     def set_scaling(self, value):
         """Live-adjust the human->robot scale on both sides. optimizer.scaling
@@ -131,10 +149,16 @@ class DexRetargeter(Retargeter):
         # glove -> left robot) is exactly the intended mirror. Keying on the
         # glove side instead feeds a natural-glove shape to the opposite-hand
         # URDF (chirality mismatch), which drives the hand to clench.
-        # NOTE: mirror still has a residual single-axis flip; fixing that needs
-        # a keypoint reflection (see the node's mirror handling), not an
-        # op2mano side swap.
+        # NOTE: op2mano[side] alone leaves a residual single-axis flip in mirror
+        # mode; _mirror_reflect (tunable, applied below) finishes it.
         joint_pos = mano @ wrist_rot @ self._op2mano[side]
+
+        # Mirror mode = keypoints came from the opposite-side glove. Reflect the
+        # MANO-frame keypoints on the configured axis to remove the residual
+        # flip (no-op vector when mirror_reflect_axis == 'none' or not mirrored).
+        if (msg.side or side).lower() != side:
+            joint_pos = joint_pos * self._mirror_reflect
+
         idx = rt.optimizer.target_link_human_indices  # (2, n_vec): [origin; task]
         ref_value = joint_pos[idx[1], :] - joint_pos[idx[0], :]
         t0 = time.perf_counter()
