@@ -240,15 +240,17 @@ class ManusDeltoGuiWindow(QWidget):
         self._chk_mirror.toggled.connect(self._node.set_mirror_mode)
         stream_row.addWidget(self._chk_mirror)
         # Mirror reflection axis (dex/dex_vector only): fixes the residual
-        # single-axis flip in mirror mode. Try x/y/z on hardware to find the
-        # right one; 'none' = no reflection.
-        stream_row.addWidget(QLabel('Mirror axis:'))
-        self._combo_mirror_axis = QComboBox()
-        self._combo_mirror_axis.addItems(['none', 'x', 'y', 'z'])
-        self._combo_mirror_axis.setCurrentText(MIRROR_AXIS_DEFAULT)
-        self._combo_mirror_axis.currentTextChanged.connect(
-            lambda a: self._node.call_set_param('mirror_reflect_axis', a))
-        stream_row.addWidget(self._combo_mirror_axis)
+        # single-axis flip in mirror mode. Confirmed on hardware to be 'x' --
+        # manus_tesollo_node's own mirror_reflect_axis default is already 'x',
+        # so leaving this GUI control out doesn't change behavior. Disabled
+        # (not removed) in case y/z ever need re-testing.
+        # stream_row.addWidget(QLabel('Mirror axis:'))
+        # self._combo_mirror_axis = QComboBox()
+        # self._combo_mirror_axis.addItems(['none', 'x', 'y', 'z'])
+        # self._combo_mirror_axis.setCurrentText(MIRROR_AXIS_DEFAULT)
+        # self._combo_mirror_axis.currentTextChanged.connect(
+        #     lambda a: self._node.call_set_param('mirror_reflect_axis', a))
+        # stream_row.addWidget(self._combo_mirror_axis)
         stream_row.addStretch()
         root.addWidget(stream_box)
 
