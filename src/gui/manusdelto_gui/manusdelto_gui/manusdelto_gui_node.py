@@ -25,8 +25,8 @@ from std_srvs.srv import SetBool, Trigger
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBox,
-    QGridLayout, QGroupBox, QHBoxLayout, QLabel, QProgressBar, QPushButton,
-    QRadioButton, QVBoxLayout, QWidget,
+    QGridLayout, QGroupBox, QHBoxLayout, QLabel, QMessageBox, QProgressBar,
+    QPushButton, QRadioButton, QVBoxLayout, QWidget,
 )
 
 # Must match manus_tesollo_node.CALIB_PHASE_SEC.
@@ -69,6 +69,15 @@ class ManusDeltoGuiNode(Node):
         self._pub_mirror = self.create_publisher(String, '/teleop/mirror_mode', 10)
         self._cli_pause = self.create_client(SetBool, '/manus_tesollo/pause')
         self._cli_calib = self.create_client(Trigger, '/manus_tesollo/calibrate')
+        # Hand freedrive services (delto_hardware): SetBool -> the driver sends
+        # zero motor duty so the fingers go limp for manual untangling while
+        # powered. Per-hand absolute names set in SystemInterface. Always
+        # created regardless of hand_ns (dg5f_left/right/both) -- calling the
+        # side that isn't running just reports that one service unavailable.
+        self._cli_freedrive_left = self.create_client(
+            SetBool, '/delto_freedrive/left')
+        self._cli_freedrive_right = self.create_client(
+            SetBool, '/delto_freedrive/right')
         # Live-tunable knobs (dex scaling/alpha, ergo calib) go through the
         # node's standard parameter service -- every rclpy node exposes one
         # at ~/set_parameters, no custom srv needed on manus_tesollo's side.
@@ -110,6 +119,45 @@ class ManusDeltoGuiNode(Node):
         req = SetBool.Request()
         req.data = enable
         self._call_async(self._cli_pause, req, done_cb)
+
+    def set_hand_freedrive(self, enable: bool, done_cb=None):
+        """Toggle DG5F freedrive on both hands. Calls the delto_hardware
+        SetBool services /delto_freedrive/{left,right}; the driver then sends
+        zero motor duty (fingers limp) while on, or resumes normal effort
+        output when off. Runs on a background thread and reports combined
+        success across the two hands."""
+        def _run():
+            oks, msgs = [], []
+            for cli in (self._cli_freedrive_left, self._cli_freedrive_right):
+                if not cli.wait_for_service(timeout_sec=2.0):
+                    oks.append(False)
+                    msgs.append(f'{cli.srv_name} unavailable')
+                    continue
+                req = SetBool.Request()
+                req.data = enable
+                fut = cli.call_async(req)
+                deadline = time.monotonic() + 5.0
+                timed_out = False
+                while not fut.done():
+                    if time.monotonic() > deadline:
+                        timed_out = True
+                        break
+                    time.sleep(0.02)
+                if timed_out:
+                    oks.append(False)
+                    msgs.append(f'{cli.srv_name} timeout')
+                    continue
+                try:
+                    res = fut.result()
+                    oks.append(res.success)
+                    if not res.success:
+                        msgs.append(res.message or f'{cli.srv_name} rejected')
+                except Exception as e:
+                    oks.append(False)
+                    msgs.append(str(e))
+            if done_cb:
+                done_cb(all(oks), '; '.join(m for m in msgs if m))
+        threading.Thread(target=_run, daemon=True).start()
 
     def call_set_param(self, name: str, value, done_cb=None):
         """Set one parameter on manus_tesollo via its standard parameter
@@ -212,6 +260,17 @@ class ManusDeltoGuiWindow(QWidget):
         self._btn_pause.toggled.connect(self._on_pause_toggled)
         stream_row.addWidget(self._btn_pause)
 
+        # Freedrive toggle — zeroes the DG5F finger gains so the hand goes limp
+        # and can be untangled by hand while powered (no need to cut power).
+        # Toggling off restores normal effort output.
+        self._btn_freedrive = QPushButton('🔧 Freedrive (hand limp)')
+        self._btn_freedrive.setCheckable(True)
+        self._btn_freedrive.setStyleSheet(
+            'QPushButton { background-color: #555; color: white; border-radius: 4px; }'
+            'QPushButton:checked { background-color: #C62828; color: white; font-weight: bold; }')
+        self._btn_freedrive.clicked.connect(self._on_freedrive_clicked)
+        stream_row.addWidget(self._btn_freedrive)
+
         self._chk_mirror = QCheckBox('Mirror mode')
         self._chk_mirror.toggled.connect(self._node.set_mirror_mode)
         stream_row.addWidget(self._chk_mirror)
@@ -305,6 +364,44 @@ class ManusDeltoGuiWindow(QWidget):
     def _on_pause_toggled(self, checked: bool):
         self._node.call_pause(checked)
         self._btn_pause.setText('▶ Resume Stream' if checked else '⏸ Pause Stream')
+
+    def _on_freedrive_clicked(self):
+        # `clicked` fires only on user interaction (not programmatic setChecked),
+        # and the checkable button's state is already toggled when it fires, so
+        # isChecked() is the requested new state.
+        enable = self._btn_freedrive.isChecked()
+        if enable:
+            reply = QMessageBox.warning(
+                self, 'Freedrive — fingers go limp',
+                'This zeroes DG5F finger torque: the hand goes LIMP so you can '
+                'untangle it by hand while powered.\n\n'
+                'While limp the fingers hold no grip. When you turn Freedrive '
+                'OFF the fingers snap back to the current command pose — hold '
+                'the glove OPEN (or pause the stream) before restoring.\n\n'
+                'Proceed?',
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                self._btn_freedrive.setChecked(False)
+                return
+        self._btn_freedrive.setEnabled(False)
+        self._btn_freedrive.setText('… applying')
+        self._node.set_hand_freedrive(
+            enable,
+            lambda ok, msg: self._sig.dispatch.emit(
+                lambda: self._on_freedrive_done(enable, ok, msg)))
+
+    def _on_freedrive_done(self, enable: bool, ok: bool, msg: str):
+        self._btn_freedrive.setEnabled(True)
+        # On success reflect the requested state; on failure snap back to the
+        # opposite (the change didn't take) and surface the error.
+        state = enable if ok else (not enable)
+        self._btn_freedrive.setChecked(state)
+        self._btn_freedrive.setText(
+            '🖐 Restore hand gains' if state else '🔧 Freedrive (hand limp)')
+        if not ok:
+            QMessageBox.critical(
+                self, 'Freedrive failed',
+                f'Could not set the hand gains:\n{msg or "unknown error"}')
 
     def _on_apply_ergo_calib(self):
         values = [sb.value() for sb in self._spin_ergo_calib]
