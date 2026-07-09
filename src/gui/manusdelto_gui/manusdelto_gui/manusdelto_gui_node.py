@@ -234,14 +234,18 @@ class ManusDeltoGuiWindow(QWidget):
         # IK is disabled here (no production use, no mirror handling). Vector
         # is kept selectable on manusdelto ONLY -- this bench rig is where the
         # experimental thumb abduction/opposition fix (vector.yml family C) is
-        # being tuned. teleop's GUI has Vector commented out. Retargeters still
-        # build regardless; this just controls the GUI entry point.
+        # being tuned. teleop's GUI has Vector commented out. Test is a second
+        # ergo instance that's never calibrated (offset always 0) -- lets you
+        # compare the raw direct mapping against the calibrated 'ergo' mode.
+        # Retargeters still build regardless; this just controls the GUI entry
+        # point.
         self._bg_mode = QButtonGroup(self)
         self._rb_modes = {}
         for label, mode in (('Ergo', 'ergo'),
                             # ('IK', 'ik'),
                             ('DexPilot', 'dex'),
                             ('Vector', 'dex_vector'),
+                            ('Test (offset=0)', 'test'),
                             ):
             rb = QRadioButton(label)
             self._bg_mode.addButton(rb)
