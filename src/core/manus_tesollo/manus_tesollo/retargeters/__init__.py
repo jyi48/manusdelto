@@ -8,6 +8,13 @@ strategy is simply omitted and the node falls back to 'ergo'.
 'ergo' (calibratable, EMA-smoothed) is the default selectable mode and also
 the seed source for 'ik' (CLIK initial guess + fallback). heuristic.py is
 kept in the repo only as a historical record — nothing here imports it.
+
+'test' is a second, independent ErgoRetargeter instance that is never wired to
+/manus_tesollo/calibrate, so its _SideCalib never leaves the uncalibrated
+state (scale=1, offset=0 for every joint, permanently -- see ergo.py's
+_SideCalib.__init__/apply). It's the raw direct ergo mapping with no ROM
+normalization, for comparing against the calibrated 'ergo' mode. manusdelto
+bench rig only.
 """
 from .base import Retargeter
 from .ergo import ErgoRetargeter, DEFAULT_JOINT_CALIB
@@ -25,7 +32,9 @@ def build_retargeters(*, kin, ik_params, dex_params, joint_calib, logger):
     simply omitted.
     """
     ergo = ErgoRetargeter(joint_calib)
-    retargeters = {"ergo": ergo}
+    # "test": independent instance, deliberately never calibrated -> offset
+    # stays 0 for every joint forever (see module docstring).
+    retargeters = {"ergo": ergo, "test": ErgoRetargeter(joint_calib)}
 
     try:
         from .ik import IKRetargeter
