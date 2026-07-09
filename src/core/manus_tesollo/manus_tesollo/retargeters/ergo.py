@@ -114,20 +114,29 @@ def _clamp(v, lo, hi):
 
 
 def _apply_posture_constraints(qd, side):
-    """Zero out anatomically-impossible thumb/spread values (in-place)."""
+    """Zero out anatomically-impossible thumb values (in-place).
+
+    EXPERIMENTAL (manusdelto only): index/middle/ring spread (4, 8, 12) are
+    deliberately NOT clamped here, unlike the private ergo_direct.py reference
+    this was originally ported from (which does clamp them, matching the
+    behavior below before this change). The vendor's own reference
+    (dg5f_driver/script/manus_retarget/manus_retarget.py) excludes these three
+    from its post-clamp entirely (`if i in [4, 8, 12, 16, 17]: continue`),
+    letting them move freely in both directions -- clamping them was
+    preventing index/middle/ring ab/adduction from moving at all whenever the
+    signed qd came out positive. Testing which reference is actually correct
+    on hardware; revert (re-add the `for i in (4, 8, 12): if qd[i] ...: 0.0`
+    block, sign per side) if this doesn't look right.
+    """
     if side == "right":
         if qd[0] < 0: qd[0] = 0.0
         if qd[2] < 0: qd[2] = 0.0
         if qd[3] < 0: qd[3] = 0.0
-        for i in (4, 8, 12):
-            if qd[i] > 0: qd[i] = 0.0
         if qd[16] > 0: qd[16] = 0.0
     else:
         if qd[0] > 0: qd[0] = 0.0
         if qd[2] > 0: qd[2] = 0.0
         if qd[3] > 0: qd[3] = 0.0
-        for i in (4, 8, 12):
-            if qd[i] < 0: qd[i] = 0.0
         if qd[16] < 0: qd[16] = 0.0
 
 

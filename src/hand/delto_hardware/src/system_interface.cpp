@@ -245,19 +245,6 @@ hardware_interface::SystemInterface::CallbackReturn SystemInterface::on_init(
                 "~/set_gpio_output2, ~/set_gpio_output3");
   }
 
-  // Freedrive service (always available). Absolute per-hand name so the two
-  // hardware instances (left/right) of the both-hands setup don't collide on
-  // the shared node name.
-  {
-    std::string freedrive_srv = "/delto_freedrive/" + hand_type_;
-    freedrive_service_ = node_->create_service<std_srvs::srv::SetBool>(
-        freedrive_srv,
-        std::bind(&SystemInterface::freedriveCallback, this,
-                  std::placeholders::_1, std::placeholders::_2));
-    RCLCPP_INFO(rclcpp::get_logger("SystemInterface"),
-                "Freedrive service created: %s", freedrive_srv.c_str());
-  }
-
   // Start executor thread for service callbacks (NOT in RT thread)
   executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
   executor_->add_node(node_);
@@ -786,27 +773,6 @@ SystemInterface::return_type SystemInterface::write(
     return return_type::OK;  // Skip write while reconnecting
   }
 
-  // Freedrive: bypass the effort->current control entirely and send zero duty
-  // so the motors are torque-free (fingers limp for manual untangling). Read
-  // fresh each cycle; the reference stream / PID gains are irrelevant while on.
-  if (freedrive_.load()) {
-    try {
-      std::vector<int> zero_duty(effort_commands_.size(), 0);
-      {
-        std::lock_guard<std::mutex> lock(comm_mutex_);
-        delto_client_->SendDuty(zero_duty);
-      }
-      is_connected_.store(true);
-      connection_status_ = 1.0;
-    } catch (const std::exception& e) {
-      RCLCPP_WARN(rclcpp::get_logger("SystemInterface"),
-                  "Freedrive write error: %s", e.what());
-      is_connected_.store(false);
-      connection_status_ = 0.0;
-    }
-    return return_type::OK;
-  }
-
   std::vector<double> filter_effort_commands(effort_commands_.size());
   std::vector<double> duty(effort_commands_.size());
   std::vector<int> int_duty(effort_commands_.size());
@@ -953,21 +919,6 @@ void SystemInterface::gpioOutput3Callback(
     response->message = std::string("GPIO output 3 set failed: ") + e.what();
     RCLCPP_ERROR(rclcpp::get_logger("SystemInterface"), "%s", response->message.c_str());
   }
-}
-
-void SystemInterface::freedriveCallback(
-    const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
-    std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
-  // Just flip the flag; write() (RT thread) reads it and sends zero duty while
-  // set. Turning it OFF resumes normal effort output -- the PID controller will
-  // immediately drive the fingers toward its current reference, so the operator
-  // should hold a safe pose before restoring.
-  freedrive_.store(request->data);
-  response->success = true;
-  response->message = std::string("Freedrive ") +
-                      (request->data ? "ON (hand limp)" : "OFF (torque resumed)");
-  RCLCPP_WARN(rclcpp::get_logger("SystemInterface"), "[%s] %s",
-              hand_type_.c_str(), response->message.c_str());
 }
 
 }  // namespace delto_hardware
