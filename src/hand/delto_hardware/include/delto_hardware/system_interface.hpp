@@ -139,6 +139,11 @@ class SystemInterface : public hardware_interface::SystemInterface {
   void gpioOutput3Callback(
       const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
       std::shared_ptr<std_srvs::srv::SetBool::Response> response);
+  // Freedrive: when enabled, write() sends zero duty so the fingers go limp
+  // (0 motor torque) and can be untangled by hand while powered.
+  void freedriveCallback(
+      const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+      std::shared_ptr<std_srvs::srv::SetBool::Response> response);
 
   // Connection parameters
   std::string delto_ip_;
@@ -218,6 +223,12 @@ class SystemInterface : public hardware_interface::SystemInterface {
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr gpio_output1_service_;
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr gpio_output2_service_;
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr gpio_output3_service_;
+  rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr freedrive_service_;
+
+  // Freedrive state: true = zero torque (hand limp for manual untangling).
+  // Read every write() cycle (RT thread); toggled by the service callback
+  // (executor thread), so it's atomic.
+  std::atomic<bool> freedrive_{false};
 
   // Tactile image publishers (per finger)
   std::vector<rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr> tactile_publishers_;
