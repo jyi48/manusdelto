@@ -49,8 +49,8 @@ ERGO_CALIB_DEFAULT = [
     1.0, 1.0, 1.3, 1.7,   # ring
     1.0, 1.0, 1.0, 1.0,   # pinky
 ]
-# Hardware-tuned preset (2026-07-07), selectable alongside the Tesollo
-# reference default above via "Load Tuned Preset".
+# Hardware-tuned presets (2026-07-07/09), selectable alongside the Tesollo
+# reference default above via the Preset dropdown.
 ERGO_CALIB_TUNED = [
     1.75, 1.0, 1.3, 2.0,  # thumb
     1.0, 1.2, 1.3, 1.3,   # index
@@ -58,6 +58,26 @@ ERGO_CALIB_TUNED = [
     1.0, 1.0, 1.3, 1.7,   # ring
     1.0, 1.0, 1.0, 1.0,   # pinky
 ]
+ERGO_CALIB_PINCH1 = [
+    0.15, 1.60, 1.30, 1.50,  # thumb
+    1.0, 1.10, 1.0, 0.9,     # index
+    0.8, 1.0, 1.0, 0.9,      # middle
+    1.0, 1.0, 0.9, 0.9,      # ring
+    1.0, 1.0, 0.9, 0.9,      # pinky
+]
+ERGO_CALIB_PINCH2 = [
+    0.15, 1.60, 1.50, 1.30,  # thumb
+    1.0, 1.35, 1.0, 0.7,     # index
+    0.5, 1.35, 1.0, 0.7,     # middle
+    1.0, 1.0, 0.9, 0.9,      # ring
+    1.0, 1.0, 0.9, 0.9,      # pinky
+]
+# Dropdown label -> calib array. Order here is the dropdown order.
+ERGO_CALIB_PRESETS = {
+    'Tuned': ERGO_CALIB_TUNED,
+    'Pinch 1': ERGO_CALIB_PINCH1,
+    'Pinch 2': ERGO_CALIB_PINCH2,
+}
 ERGO_CALIB_FINGERS = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky']
 
 
@@ -294,9 +314,11 @@ class ManusDeltoGuiWindow(QWidget):
         btn_reset_calib = QPushButton('Reset to Default')
         btn_reset_calib.clicked.connect(self._on_reset_ergo_calib)
         ergo_btn_row.addWidget(btn_reset_calib)
-        btn_tuned_calib = QPushButton('Load Tuned Preset')
-        btn_tuned_calib.clicked.connect(self._on_load_tuned_ergo_calib)
-        ergo_btn_row.addWidget(btn_tuned_calib)
+        ergo_btn_row.addWidget(QLabel('Preset:'))
+        self._combo_ergo_preset = QComboBox()
+        self._combo_ergo_preset.addItems(list(ERGO_CALIB_PRESETS.keys()))
+        self._combo_ergo_preset.currentTextChanged.connect(self._on_load_ergo_preset)
+        ergo_btn_row.addWidget(self._combo_ergo_preset)
         ergo_btn_row.addStretch()
         ergo_col.addLayout(ergo_btn_row)
         self._lbl_ergo_calib_status = QLabel('')
@@ -324,8 +346,11 @@ class ManusDeltoGuiWindow(QWidget):
             sb.setValue(v)
         self._on_apply_ergo_calib()
 
-    def _on_load_tuned_ergo_calib(self):
-        for sb, v in zip(self._spin_ergo_calib, ERGO_CALIB_TUNED):
+    def _on_load_ergo_preset(self, name: str):
+        values = ERGO_CALIB_PRESETS.get(name)
+        if values is None:
+            return
+        for sb, v in zip(self._spin_ergo_calib, values):
             sb.setValue(v)
         self._on_apply_ergo_calib()
 
