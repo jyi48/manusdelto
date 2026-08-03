@@ -1,6 +1,7 @@
 #include <memory>
 #include <thread>
 
+
 #include <iostream>
 #include "dg5f_driver/dg5f_operator_TCP.hpp"
 #include "rclcpp/executors/multi_threaded_executor.hpp"
@@ -8,8 +9,6 @@
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "std_msgs/msg/float32_multi_array.hpp"
 #include "std_msgs/msg/string.hpp"
-#include "std_srvs/srv/set_bool.hpp"
-#include "std_srvs/srv/trigger.hpp"
 
 using namespace std::chrono_literals;
 
@@ -27,7 +26,7 @@ std::vector<std::string> joint_names_right = {
 
 class dg5fDriver : public rclcpp::Node {
  public:
-  dg5fDriver() : Node("dg5FDriver") {
+  dg5fDriver() : Node("dg5f_operator_driver") {
     this->declare_parameter<std::string>("ip", "169.254.186.72");
     this->declare_parameter<int>("port", 502);
     this->declare_parameter<std::string>("hand_type", "right");
@@ -47,57 +46,10 @@ class dg5fDriver : public rclcpp::Node {
     timer_ = this->create_wall_timer(
         50ms, std::bind(&dg5fDriver::timer_callback, this));
 
-    // /dg5f/<hand_type>/hand_power  true=ON  false=OFF
-    std::string power_srv = "/dg5f/" + hand_type_ + "/hand_power";
-    srv_hand_power_ = this->create_service<std_srvs::srv::SetBool>(
-        power_srv,
-        [this](const std_srvs::srv::SetBool::Request::SharedPtr req,
-               std_srvs::srv::SetBool::Response::SharedPtr res) {
-          if (!delto_client_ || !delto_client_->isConnected()) {
-            res->success = false;
-            res->message = "not connected";
-            return;
-          }
-          if (req->data) {
-            delto_client_->start_control();
-            res->message = "power ON";
-          } else {
-            delto_client_->stop_control();
-            res->message = "power OFF";
-          }
-          res->success = true;
-          RCLCPP_INFO(this->get_logger(), "hand_power: %s", res->message.c_str());
-        });
-
-    // /dg5f/<hand_type>/hand_reset  OFF -> 500ms -> ON
-    std::string reset_srv = "/dg5f/" + hand_type_ + "/hand_reset";
-    srv_hand_reset_ = this->create_service<std_srvs::srv::Trigger>(
-        reset_srv,
-        [this](const std_srvs::srv::Trigger::Request::SharedPtr /*req*/,
-               std_srvs::srv::Trigger::Response::SharedPtr res) {
-          if (!delto_client_ || !delto_client_->isConnected()) {
-            res->success = false;
-            res->message = "not connected";
-            return;
-          }
-          delto_client_->stop_control();
-          std::this_thread::sleep_for(std::chrono::milliseconds(500));
-          delto_client_->start_control();
-          res->success = true;
-          res->message = "reset OK";
-          RCLCPP_INFO(this->get_logger(), "hand_reset: %s", res->message.c_str());
-        });
-
-    RCLCPP_INFO(this->get_logger(), "services: %s, %s", power_srv.c_str(), reset_srv.c_str());
-
-    try {
-      delto_client_ = std::make_unique<DG5F_TCP>(ip_, port_);
-      delto_client_->connect();
-    } catch (const boost::system::system_error& e) {
-      if (e.code() != boost::asio::error::operation_aborted &&
-          e.code() != boost::asio::error::interrupted) {
-        throw;
-      }
+    delto_client_ = std::make_unique<DG5F_TCP>(ip_, port_);
+    if (!delto_client_->connect()) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "Failed to connect to %s:%d", ip_.c_str(), port_);
     }
   }
 
@@ -121,12 +73,28 @@ class dg5fDriver : public rclcpp::Node {
       std::cout << value << " ";
     }
 
-    delto_client_->start_control();
+    // NOTE: msg->data is printed but never applied -- this driver has no
+    // set_position_rad() call, so commanded targets are discarded.
+    try {
+      delto_client_->start_control();
+    } catch (const std::exception& e) {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                           "Modbus write failed: %s", e.what());
+    }
     std::cout << std::endl;
   }
 
   void timer_callback() {
-    data = delto_client_->get_data();
+    // A Modbus timeout or exception response throws. Left uncaught it
+    // propagates out of the executor and terminates the process, so one
+    // dropped frame used to kill the node.
+    try {
+      data = delto_client_->get_data();
+    } catch (const std::exception& e) {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                           "Modbus read failed: %s", e.what());
+      return;
+    }
     // this->get_logger().info("Received data fr som DG5F");S?
     RCLCPP_INFO(this->get_logger(), "Received data from DG5F");
     // Publish joint states
@@ -153,9 +121,8 @@ class dg5fDriver : public rclcpp::Node {
   std::unique_ptr<DG5F_TCP> delto_client_;
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr publisher_;
-  rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr subscription_;
-  rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr srv_hand_power_;
-  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr srv_hand_reset_;
+  rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr
+      subscription_;
   ReceivedData data;
   std::string hand_type_;
 };
@@ -166,10 +133,16 @@ int main(int argc, char* argv[]) {
   rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(),
                                                     2);
 
-  auto node = std::make_shared<dg5fDriver>();
-
-  executor.add_node(node);
-  executor.spin();
+  try {
+    auto node = std::make_shared<dg5fDriver>();
+    executor.add_node(node);
+    executor.spin();
+  } catch (const std::exception& e) {
+    RCLCPP_ERROR(rclcpp::get_logger("dg5fDriver"),
+                 "Fatal error: %s", e.what());
+    rclcpp::shutdown();
+    return 1;
+  }
 
   rclcpp::shutdown();
   return 0;

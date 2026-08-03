@@ -77,12 +77,17 @@ ros2 launch dg5f_driver dg5f_right_pid_all_controller.launch.py delto_ip:=169.25
 
 | Script | Controller Type | Description |
 |--------|-----------------|-------------|
-| `dg5f_right_jtc_test.py` | JTC | JointTrajectory based test |
+| `dg5f_right_jtc_test.py` | JTC (topic) | JointTrajectory topic based test |
+| `dg5f_right_jtc_action_test.py` | JTC (action) | FollowJointTrajectory action based test |
 | `dg5f_right_pid_test.py` | PID | Individual joint PID test |
 | `dg5f_right_pid_all_test.py` | PID All | All joints PID test |
 
 ```bash
+# Topic based (fire-and-forget)
 ros2 run dg5f_driver dg5f_right_jtc_test.py
+
+# Action based (sends the whole trajectory as one goal and waits for the result)
+ros2 run dg5f_driver dg5f_right_jtc_action_test.py
 ```
 
 ---
@@ -112,12 +117,17 @@ ros2 launch dg5f_driver dg5f_left_pid_all_controller.launch.py delto_ip:=169.254
 
 | Script | Controller Type | Description |
 |--------|-----------------|-------------|
-| `dg5f_left_jtc_test.py` | JTC | JointTrajectory based test |
+| `dg5f_left_jtc_test.py` | JTC (topic) | JointTrajectory topic based test |
+| `dg5f_left_jtc_action_test.py` | JTC (action) | FollowJointTrajectory action based test |
 | `dg5f_left_pid_test.py` | PID | Individual joint PID test |
 | `dg5f_left_pid_all_test.py` | PID All | All joints PID test |
 
 ```bash
+# Topic based (fire-and-forget)
 ros2 run dg5f_driver dg5f_left_jtc_test.py
+
+# Action based (sends the whole trajectory as one goal and waits for the result)
+ros2 run dg5f_driver dg5f_left_jtc_action_test.py
 ```
 
 ---
