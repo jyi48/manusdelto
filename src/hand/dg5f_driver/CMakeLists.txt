@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 3.12)
 project(dg5f_driver)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -9,12 +9,24 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(trajectory_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
-find_package(std_srvs REQUIRED)
+find_package(std_msgs REQUIRED) 
 find_package(delto_hardware REQUIRED)
 
 # dg5f_operator_driver executable
 add_executable(dg5f_operator_driver src/dg5f_operator_driver.cpp)
-ament_target_dependencies(dg5f_operator_driver rclcpp trajectory_msgs sensor_msgs std_srvs)
+# ament_target_dependencies() was removed in the ament_cmake shipped with
+# ROS 2 Lyrical. Detect the command rather than the distro so one
+# CMakeLists covers Humble, Jazzy and Lyrical.
+if(COMMAND ament_target_dependencies)
+  ament_target_dependencies(dg5f_operator_driver rclcpp trajectory_msgs sensor_msgs std_msgs)
+else()
+  target_link_libraries(dg5f_operator_driver
+    rclcpp::rclcpp
+    ${trajectory_msgs_TARGETS}
+    ${sensor_msgs_TARGETS}
+    ${std_msgs_TARGETS}
+  )
+endif()
 
 target_include_directories(dg5f_operator_driver PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -27,9 +39,11 @@ install(TARGETS
 )
 
 install(
-  PROGRAMS 
+  PROGRAMS
   script/dg5f_left_jtc_test.py
   script/dg5f_right_jtc_test.py
+  script/dg5f_left_jtc_action_test.py
+  script/dg5f_right_jtc_action_test.py
   script/dg5f_left_pid_test.py
   script/dg5f_right_pid_test.py
   script/dg5f_left_pid_all_test.py
