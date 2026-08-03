@@ -7,12 +7,14 @@ from rclpy.node import Node
 from control_msgs.msg import MultiDOFCommand
 from manus_ros2_msgs.msg import ManusGlove
 from rcl_interfaces.msg import SetParametersResult
+from sensor_msgs.msg import JointState
 from std_msgs.msg import String
 from std_srvs.srv import SetBool, Trigger
 
 from manus_tesollo.retargeters import build_retargeters, DEFAULT_JOINT_CALIB
 
 CALIB_PHASE_SEC = 4.0  # seconds per phase — matches scm_gui's CALIB_DURATION
+_OPEN_RAMP_HZ = 50.0   # ramp update rate for the gentle "open hand"
 
 try:
     from manus_tesollo.dg5f_kinematics import DG5FKinematics
@@ -56,13 +58,29 @@ class ManusTesolloNode(Node):
         self.create_subscription(
             String, "/manus_tesollo/retarget_mode", self._cb_retarget_mode, 10
         )
+        # Actual measured joint positions (joint_state_broadcaster), cached per
+        # side by name -- used only as the ramp START for "open hand" so it eases
+        # from where the fingers actually are (no jump).
+        self.create_subscription(
+            JointState, f"/{ns}/joint_states", self._cb_joint_states, 10
+        )
+        self._actual = {"left": None, "right": None}
 
         self._mirror_mode = False
         self._paused = False
         self._prev_vals = {"left": [0.0] * 20, "right": [0.0] * 20}
 
+        # Gentle "open hand" ramp state. open_ramp_sec = 0 -> instant.
+        self._open_ramp_sec = (
+            self.declare_parameter("open_ramp_sec", 1.5)
+            .get_parameter_value().double_value
+        )
+        self._open_timer = None
+        self._opening = False   # gate the paused-hold publish while ramping
+
         self.create_service(SetBool, "/manus_tesollo/pause", self._cb_pause)
         self.create_service(SetBool, "/manus_tesollo/set_ik_mode", self._cb_set_ik_mode)
+        self.create_service(Trigger, "/manus_tesollo/open_hand", self._srv_open_hand)
 
         # --- IK / spatial-mapping parameters ---
         pos_w = (
@@ -302,6 +320,70 @@ class ManusTesolloNode(Node):
         self.get_logger().info(f"manus_tesollo: {res.message}")
         return res
 
+    def _cb_joint_states(self, msg: JointState):
+        pos = dict(zip(msg.name, msg.position))
+        for side, names in (("left", LEFT_JOINT_NAMES), ("right", RIGHT_JOINT_NAMES)):
+            if all(n in pos for n in names):
+                self._actual[side] = [float(pos[n]) for n in names]
+
+    def _publish_vals(self, side, vals):
+        names = LEFT_JOINT_NAMES if side == "left" else RIGHT_JOINT_NAMES
+        pub = self._left_pub if side == "left" else self._right_pub
+        out = MultiDOFCommand()
+        out.dof_names = names
+        out.values = list(vals)
+        out.values_dot = [0.0] * len(names)
+        pub.publish(out)
+
+    def _srv_open_hand(self, req: Trigger.Request, res: Trigger.Response):
+        # Ramp both hands from their current pose to all-zeros (open) over
+        # open_ramp_sec so the fingers don't snap open. Pause so the glove
+        # doesn't fight; the ramp timer owns publishing until it finishes, then
+        # the paused-hold path keeps republishing zeros. Resume via
+        # /manus_tesollo/pause False to hand control back to the glove.
+        self._paused = True
+        self._open_start = {
+            side: list(self._actual[side]) if self._actual[side] is not None
+            else list(self._prev_vals[side])
+            for side in ("left", "right")
+        }
+        if self._open_timer is not None:
+            self._open_timer.cancel()
+        if self._open_ramp_sec <= 0.0:
+            self._finish_open()
+            res.message = "hand opened (zeros, instant); stream paused"
+        else:
+            self._open_t0 = self.get_clock().now()
+            self._opening = True
+            self._open_timer = self.create_timer(1.0 / _OPEN_RAMP_HZ, self._on_open_tick)
+            res.message = (f"opening hand over {self._open_ramp_sec:.1f}s; "
+                           "stream paused -- resume to teleop")
+        res.success = True
+        self.get_logger().info(f"open_hand: {res.message}")
+        return res
+
+    def _on_open_tick(self):
+        elapsed = (self.get_clock().now() - self._open_t0).nanoseconds * 1e-9
+        t = min(1.0, elapsed / self._open_ramp_sec) if self._open_ramp_sec > 0 else 1.0
+        for side in ("left", "right"):
+            start = self._open_start[side]
+            vals = [(1.0 - t) * start[i] for i in range(len(start))]  # target = 0
+            self._prev_vals[side] = list(vals)
+            self._publish_vals(side, vals)
+        if t >= 1.0:
+            self._finish_open()
+
+    def _finish_open(self):
+        zeros = [0.0] * 20
+        self._prev_vals["left"] = list(zeros)
+        self._prev_vals["right"] = list(zeros)
+        for side in ("left", "right"):
+            self._publish_vals(side, zeros)
+        self._opening = False
+        if self._open_timer is not None:
+            self._open_timer.cancel()
+            self._open_timer = None
+
     def _cb(self, msg: ManusGlove):
         side = (msg.side or "").lower()
         if side not in ("left", "right"):
@@ -315,13 +397,10 @@ class ManusTesolloNode(Node):
         )
 
         if self._paused:
-            names = LEFT_JOINT_NAMES if compute_side == "left" else RIGHT_JOINT_NAMES
-            pub = self._left_pub if compute_side == "left" else self._right_pub
-            out = MultiDOFCommand()
-            out.dof_names = names
-            out.values = self._prev_vals[compute_side]
-            out.values_dot = [0.0] * len(names)
-            pub.publish(out)
+            # While an open-hand ramp is running, its timer owns publishing --
+            # don't also emit here or the two fight on the reference topic.
+            if not self._opening:
+                self._publish_vals(compute_side, self._prev_vals[compute_side])
             return
 
         ergo = {}
