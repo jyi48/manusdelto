@@ -89,6 +89,7 @@ class ManusDeltoGuiNode(Node):
         self._pub_mirror = self.create_publisher(String, '/teleop/mirror_mode', 10)
         self._cli_pause = self.create_client(SetBool, '/manus_tesollo/pause')
         self._cli_calib = self.create_client(Trigger, '/manus_tesollo/calibrate')
+        self._cli_open = self.create_client(Trigger, '/manus_tesollo/open_hand')
         # Live-tunable knobs (dex scaling/alpha, ergo calib) go through the
         # node's standard parameter service -- every rclpy node exposes one
         # at ~/set_parameters, no custom srv needed on manus_tesollo's side.
@@ -130,6 +131,11 @@ class ManusDeltoGuiNode(Node):
         req = SetBool.Request()
         req.data = enable
         self._call_async(self._cli_pause, req, done_cb)
+
+    def call_open_hand(self, done_cb=None):
+        """Open the hand: manus_tesollo ramps all joints to 0 and holds
+        (pauses the glove stream). Resume via call_pause(False)."""
+        self._call_async(self._cli_open, Trigger.Request(), done_cb)
 
     def call_set_param(self, name: str, value, done_cb=None):
         """Set one parameter on manus_tesollo via its standard parameter
@@ -236,6 +242,15 @@ class ManusDeltoGuiWindow(QWidget):
         self._btn_pause.toggled.connect(self._on_pause_toggled)
         stream_row.addWidget(self._btn_pause)
 
+        # Open hand: ramp all joints to 0 (open) and hold. For after inference
+        # leaves the hand in a grasp. Pauses the stream, so it also flips the
+        # pause toggle on so the UI reflects the held state.
+        self._btn_open = QPushButton('Open Hand')
+        self._btn_open.setStyleSheet(
+            'QPushButton { background-color: #00695C; color: white; border-radius: 4px; }')
+        self._btn_open.clicked.connect(self._on_open_hand)
+        stream_row.addWidget(self._btn_open)
+
         self._chk_mirror = QCheckBox('Mirror mode')
         self._chk_mirror.toggled.connect(self._node.set_mirror_mode)
         stream_row.addWidget(self._chk_mirror)
@@ -334,6 +349,23 @@ class ManusDeltoGuiWindow(QWidget):
     def _on_pause_toggled(self, checked: bool):
         self._node.call_pause(checked)
         self._btn_pause.setText('▶ Resume Stream' if checked else '⏸ Pause Stream')
+
+    def _on_open_hand(self):
+        self._btn_open.setEnabled(False)
+
+        def done(ok, msg):
+            def _apply():
+                self._btn_open.setEnabled(True)
+                if ok:
+                    # manus_tesollo pauses to hold the open pose; reflect it in
+                    # the pause toggle (block signal so it doesn't re-send pause).
+                    self._btn_pause.blockSignals(True)
+                    self._btn_pause.setChecked(True)
+                    self._btn_pause.setText('▶ Resume Stream')
+                    self._btn_pause.blockSignals(False)
+            self._sig.dispatch.emit(_apply)
+
+        self._node.call_open_hand(done)
 
     def _on_apply_ergo_calib(self):
         values = [sb.value() for sb in self._spin_ergo_calib]

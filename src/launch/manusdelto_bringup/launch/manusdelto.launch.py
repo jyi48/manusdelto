@@ -56,15 +56,16 @@ def generate_launch_description():
             'use_gui', default_value='true',
             description='Launch manusdelto_gui'),
 
-        # Both-hand IP/port (used only when hand_ns:=dg5f_both). Test rig:
-        # left=192.168.1.151, right=192.168.1.152.
-        DeclareLaunchArgument('dg5f_right_ip', default_value='192.168.1.152'),
+        # Both-hand IP/port (used only when hand_ns:=dg5f_both). Gripper factory
+        # link-local defaults: left=169.254.186.73, right=169.254.186.72.
+        DeclareLaunchArgument('dg5f_right_ip', default_value='169.254.186.72'),
         DeclareLaunchArgument('dg5f_right_port', default_value='502'),
-        DeclareLaunchArgument('dg5f_left_ip', default_value='192.168.1.151'),
+        DeclareLaunchArgument('dg5f_left_ip', default_value='169.254.186.73'),
         DeclareLaunchArgument('dg5f_left_port', default_value='502'),
 
-        # Single-hand IP/port (used only when hand_ns:=dg5f_left or dg5f_right)
-        DeclareLaunchArgument('delto_ip', default_value='192.168.1.151'),
+        # Single-hand IP/port (used only when hand_ns:=dg5f_left or dg5f_right).
+        # Factory default = left hand (169.254.186.73).
+        DeclareLaunchArgument('delto_ip', default_value='169.254.186.73'),
         DeclareLaunchArgument('delto_port', default_value='502'),
 
         # ── Input: Manus glove publisher ────────────────────────────────────
