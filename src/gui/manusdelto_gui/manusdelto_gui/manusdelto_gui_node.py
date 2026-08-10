@@ -428,6 +428,10 @@ class ManusDeltoGuiWindow(QWidget):
 
     def _on_hand_model_changed(self, btn_id: int):
         model = 's' if btn_id == 1 else 'm'
+        # An explicit choice wins over the startup sync: stop polling so a
+        # reply still in flight can't put the radio back where it was.
+        self._hand_model_synced = True
+        self._t_hand_model.stop()
 
         def done(ok, msg):
             if ok:
