@@ -32,6 +32,17 @@ LEFT_JOINT_NAMES = [
 ]
 RIGHT_JOINT_NAMES = [n.replace("lj_", "rj_") for n in LEFT_JOINT_NAMES]
 
+# DG5F-S (hand_model:=s). Same 5x4 layout as the M, so every retargeter runs
+# unchanged -- only the names and topic wiring differ. The S ships no both-hand
+# launch: each hand is its own namespace (dg5f_s_left / dg5f_s_right) and BOTH
+# sides carry these identical names, which is why joint_states has to be tagged
+# per topic instead of matched by name.
+S_JOINT_NAMES = [
+    f"joint_{finger}_{joint}"
+    for finger in range(1, 6)
+    for joint in range(1, 5)
+]
+
 
 class ManusTesolloNode(Node):
     def __init__(self):
@@ -42,14 +53,27 @@ class ManusTesolloNode(Node):
                 self.declare_parameter(name, default).get_parameter_value().string_value
             )
 
-        ns = _p("hand_ns", "dg5f_both")
+        self._hand_ns = _p("hand_ns", "dg5f_both")          # DG5F-M (both hands)
+        self._s_left_ns = _p("s_left_hand_ns", "dg5f_s_left")    # DG5F-S, per hand
+        self._s_right_ns = _p("s_right_hand_ns", "dg5f_s_right")
         left_in = _p("left_input_topic", "/manus_glove_0")
         right_in = _p("right_input_topic", "/manus_glove_1")
-        left_out = _p("left_output_topic", f"/{ns}/lj_dg_pospid/reference")
-        right_out = _p("right_output_topic", f"/{ns}/rj_dg_pospid/reference")
+        # Empty = derive the reference topic from hand_model; a non-empty value
+        # pins it and survives a model switch.
+        self._out_override = {
+            "left": _p("left_output_topic", ""),
+            "right": _p("right_output_topic", ""),
+        }
 
-        self._left_pub = self.create_publisher(MultiDOFCommand, left_out, 10)
-        self._right_pub = self.create_publisher(MultiDOFCommand, right_out, 10)
+        # Joint names, reference publishers and joint_states subscriptions all
+        # depend on which hand is attached, so they live in _wire_hand_model()
+        # and get rebuilt when the GUI flips the `hand_model` parameter.
+        self._pubs = {"left": None, "right": None}
+        self._js_subs = []
+        self._names = {}
+        self._hand_model = None
+        self._wire_hand_model(_p("hand_model", "m"))
+
         self.create_subscription(ManusGlove, left_in, self._cb, 10)
         self.create_subscription(ManusGlove, right_in, self._cb, 10)
         self.create_subscription(
@@ -58,14 +82,6 @@ class ManusTesolloNode(Node):
         self.create_subscription(
             String, "/manus_tesollo/retarget_mode", self._cb_retarget_mode, 10
         )
-        # Actual measured joint positions (joint_state_broadcaster), cached per
-        # side by name -- used only as the ramp START for "open hand" so it eases
-        # from where the fingers actually are (no jump).
-        self.create_subscription(
-            JointState, f"/{ns}/joint_states", self._cb_joint_states, 10
-        )
-        self._actual = {"left": None, "right": None}
-
         self._mirror_mode = False
         self._paused = False
         self._prev_vals = {"left": [0.0] * 20, "right": [0.0] * 20}
@@ -210,8 +226,10 @@ class ManusTesolloNode(Node):
         self.declare_parameter("mirror_reflect_axis", "x")
         self.add_on_set_parameters_callback(self._on_param_change)
 
-        self.get_logger().info(f"left  {left_in} -> {left_out}")
-        self.get_logger().info(f"right {right_in} -> {right_out}")
+        self.get_logger().info(
+            f"left  {left_in} -> {self._pubs['left'].topic_name}")
+        self.get_logger().info(
+            f"right {right_in} -> {self._pubs['right'].topic_name}")
         self.get_logger().info(f"mode: {self._mode}")
 
     def _cb_mirror_mode(self, msg: String):
@@ -311,6 +329,11 @@ class ManusTesolloNode(Node):
                     if rt is not None:
                         rt.set_mirror_reflect(axis)
                 self.get_logger().info(f"mirror_reflect_axis -> {axis}")
+            elif p.name == "hand_model":
+                try:
+                    self._wire_hand_model(p.value)
+                except ValueError as ex:
+                    return SetParametersResult(successful=False, reason=str(ex))
         return SetParametersResult(successful=True)
 
     def _cb_pause(self, req: SetBool.Request, res: SetBool.Response):
@@ -320,15 +343,77 @@ class ManusTesolloNode(Node):
         self.get_logger().info(f"manus_tesollo: {res.message}")
         return res
 
-    def _cb_joint_states(self, msg: JointState):
+    def _wire_hand_model(self, model):
+        """(Re)wire joint names, reference publishers and joint_states subs for
+        the attached hand. Safe to call at runtime: the GUI flips the
+        `hand_model` parameter, mirroring how RBY1 switches robot_model."""
+        model = (model or "m").strip().lower()
+        if model not in ("m", "s"):
+            raise ValueError(f"hand_model must be 'm' or 's', got '{model}'")
+        if model == self._hand_model:
+            return
+
+        if model == "s":
+            # Both S hands publish the SAME joint names in different
+            # namespaces, so each joint_states topic is tagged with its side.
+            # Matching by name here would let the left hand's state also land
+            # in _actual["right"] and ramp open-hand from the wrong pose.
+            names = list(S_JOINT_NAMES)
+            self._names = {"left": names, "right": list(names)}
+            out = {
+                "left": f"/{self._s_left_ns}/joint_pospid/reference",
+                "right": f"/{self._s_right_ns}/joint_pospid/reference",
+            }
+            js = [
+                (("left",), f"/{self._s_left_ns}/joint_states"),
+                (("right",), f"/{self._s_right_ns}/joint_states"),
+            ]
+        else:
+            self._names = {
+                "left": list(LEFT_JOINT_NAMES),
+                "right": list(RIGHT_JOINT_NAMES),
+            }
+            out = {
+                "left": f"/{self._hand_ns}/lj_dg_pospid/reference",
+                "right": f"/{self._hand_ns}/rj_dg_pospid/reference",
+            }
+            # One broadcaster carries both hands; lj_/rj_ prefixes separate them.
+            js = [(("left", "right"), f"/{self._hand_ns}/joint_states")]
+
+        for side in ("left", "right"):
+            if self._pubs[side] is not None:
+                self.destroy_publisher(self._pubs[side])
+            self._pubs[side] = self.create_publisher(
+                MultiDOFCommand, self._out_override[side] or out[side], 10)
+
+        for sub in self._js_subs:
+            self.destroy_subscription(sub)
+        self._js_subs = [
+            self.create_subscription(
+                JointState, topic,
+                lambda msg, s=sides: self._cb_joint_states(msg, s), 10)
+            for sides, topic in js
+        ]
+
+        # Measured poses belong to the previous hand -- drop them so an open-hand
+        # ramp falls back to the last command until fresh state arrives.
+        self._actual = {"left": None, "right": None}
+        self._hand_model = model
+        self.get_logger().info(
+            f"hand_model -> DG5F-{model.upper()}: "
+            f"left {self._pubs['left'].topic_name}, "
+            f"right {self._pubs['right'].topic_name}")
+
+    def _cb_joint_states(self, msg: JointState, sides=("left", "right")):
         pos = dict(zip(msg.name, msg.position))
-        for side, names in (("left", LEFT_JOINT_NAMES), ("right", RIGHT_JOINT_NAMES)):
+        for side in sides:
+            names = self._names[side]
             if all(n in pos for n in names):
                 self._actual[side] = [float(pos[n]) for n in names]
 
     def _publish_vals(self, side, vals):
-        names = LEFT_JOINT_NAMES if side == "left" else RIGHT_JOINT_NAMES
-        pub = self._left_pub if side == "left" else self._right_pub
+        names = self._names[side]
+        pub = self._pubs[side]
         out = MultiDOFCommand()
         out.dof_names = names
         out.values = list(vals)
@@ -446,8 +531,8 @@ class ManusTesolloNode(Node):
         # self-sufficient — ergo and ik clamp to their own joint limits and
         # smooth via EMA; dex's SeqRetargeting clamps to its URDF limits and
         # smooths via its own low_pass_alpha.
-        names = LEFT_JOINT_NAMES if compute_side == "left" else RIGHT_JOINT_NAMES
-        pub = self._left_pub if compute_side == "left" else self._right_pub
+        names = self._names[compute_side]
+        pub = self._pubs[compute_side]
 
         self._prev_vals[compute_side] = list(vals)
 

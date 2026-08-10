@@ -237,6 +237,20 @@ class ManusDeltoGuiWindow(QWidget):
         # ── Stream / mirror ──────────────────────────────────────────────
         stream_box = QGroupBox('Stream')
         stream_row = QHBoxLayout(stream_box)
+
+        # Hand model. The S has different joint names (joint_*) and one
+        # namespace per hand, so manus_tesollo rewires its publishers on this.
+        stream_row.addWidget(QLabel('Hand:'))
+        self._rb_hand_m = QRadioButton('DG5F-M')
+        self._rb_hand_s = QRadioButton('DG5F-S')
+        self._rb_hand_m.setChecked(True)
+        self._bg_hand_model = QButtonGroup(self)
+        self._bg_hand_model.addButton(self._rb_hand_m, 0)
+        self._bg_hand_model.addButton(self._rb_hand_s, 1)
+        self._bg_hand_model.idClicked.connect(self._on_hand_model_changed)
+        stream_row.addWidget(self._rb_hand_m)
+        stream_row.addWidget(self._rb_hand_s)
+
         self._btn_pause = QPushButton('⏸ Pause Stream')
         self._btn_pause.setCheckable(True)
         self._btn_pause.toggled.connect(self._on_pause_toggled)
@@ -349,6 +363,26 @@ class ManusDeltoGuiWindow(QWidget):
     def _on_pause_toggled(self, checked: bool):
         self._node.call_pause(checked)
         self._btn_pause.setText('▶ Resume Stream' if checked else '⏸ Pause Stream')
+
+    def _on_hand_model_changed(self, btn_id: int):
+        model = 's' if btn_id == 1 else 'm'
+
+        def done(ok, msg):
+            if ok:
+                return
+
+            def _apply():
+                # Rewiring failed, so the node still drives the other hand --
+                # put the radio back rather than leave it lying about which.
+                prev = self._rb_hand_m if model == 's' else self._rb_hand_s
+                prev.blockSignals(True)
+                prev.setChecked(True)
+                prev.blockSignals(False)
+                self._node.get_logger().error(
+                    f"hand_model -> {model}: {msg or 'unknown error'}")
+            self._sig.dispatch.emit(_apply)
+
+        self._node.call_set_param('hand_model', model, done)
 
     def _on_open_hand(self):
         self._btn_open.setEnabled(False)

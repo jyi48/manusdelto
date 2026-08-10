@@ -22,6 +22,7 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     hand_ns = LaunchConfiguration('hand_ns')
+    hand_model = LaunchConfiguration('hand_model')
     use_ik = LaunchConfiguration('use_ik')
     orientation_weight = LaunchConfiguration('orientation_weight')
     use_gui = LaunchConfiguration('use_gui')
@@ -46,6 +47,14 @@ def generate_launch_description():
             'hand_ns', default_value='dg5f_both',
             description='Which dg5f_driver stack to bring up: '
                         'dg5f_both, dg5f_left, or dg5f_right'),
+        DeclareLaunchArgument(
+            'hand_model', default_value='m',
+            description='DG5F variant for manus_tesollo: m (hand_ns namespace, '
+                        'lj_/rj_ joints) or s (dg5f_s_left/right namespaces, '
+                        'joint_* names). Also switchable live from the GUI. '
+                        'The S driver itself is launched separately '
+                        '(hw-core launch_dg5f_s.sh) -- this rig only includes '
+                        'the M driver.'),
         DeclareLaunchArgument(
             'use_ik', default_value='false',
             description='Start manus_tesollo in ik mode (requires pinocchio)'),
@@ -84,6 +93,7 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'hand_ns': hand_ns,
+                'hand_model': hand_model,
                 'use_ik': use_ik,
                 'orientation_weight': orientation_weight,
             }],
