@@ -18,7 +18,7 @@ import time
 import rclpy
 from rclpy.node import Node
 from rcl_interfaces.msg import Parameter as RosParameter, ParameterType, ParameterValue
-from rcl_interfaces.srv import SetParameters
+from rcl_interfaces.srv import GetParameters, SetParameters
 from std_msgs.msg import String
 from std_srvs.srv import SetBool, Trigger
 
@@ -95,6 +95,8 @@ class ManusDeltoGuiNode(Node):
         # at ~/set_parameters, no custom srv needed on manus_tesollo's side.
         self._cli_set_param = self.create_client(
             SetParameters, '/manus_tesollo/set_parameters')
+        self._cli_get_param = self.create_client(
+            GetParameters, '/manus_tesollo/get_parameters')
 
     def _call_async(self, client, request, done_cb=None, timeout_sec=5.0):
         """Fire-and-poll a service call on a background thread; done_cb runs
@@ -136,6 +138,35 @@ class ManusDeltoGuiNode(Node):
         """Open the hand: manus_tesollo ramps all joints to 0 and holds
         (pauses the glove stream). Resume via call_pause(False)."""
         self._call_async(self._cli_open, Trigger.Request(), done_cb)
+
+    def call_get_hand_model(self, done_cb=None):
+        """Read manus_tesollo's current hand_model so the radio shows what the
+        node actually drives instead of assuming a default. done_cb(ok, model)."""
+        req = GetParameters.Request()
+        req.names = ['hand_model']
+
+        def _run():
+            if not self._cli_get_param.wait_for_service(timeout_sec=2.0):
+                if done_cb:
+                    done_cb(False, '')
+                return
+            fut = self._cli_get_param.call_async(req)
+            deadline = time.monotonic() + 5.0
+            while not fut.done():
+                if time.monotonic() > deadline:
+                    if done_cb:
+                        done_cb(False, '')
+                    return
+                time.sleep(0.02)
+            try:
+                values = list(getattr(fut.result(), 'values', []) or [])
+                model = values[0].string_value if values else ''
+                if done_cb:
+                    done_cb(bool(model), model)
+            except Exception:
+                if done_cb:
+                    done_cb(False, '')
+        threading.Thread(target=_run, daemon=True).start()
 
     def call_set_param(self, name: str, value, done_cb=None):
         """Set one parameter on manus_tesollo via its standard parameter
@@ -243,13 +274,23 @@ class ManusDeltoGuiWindow(QWidget):
         stream_row.addWidget(QLabel('Hand:'))
         self._rb_hand_m = QRadioButton('DG5F-M')
         self._rb_hand_s = QRadioButton('DG5F-S')
-        self._rb_hand_s.setChecked(True)   # matches the node/launch default
+        self._rb_hand_s.setChecked(True)   # provisional -- corrected by _sync_hand_model
         self._bg_hand_model = QButtonGroup(self)
         self._bg_hand_model.addButton(self._rb_hand_m, 0)
         self._bg_hand_model.addButton(self._rb_hand_s, 1)
         self._bg_hand_model.idClicked.connect(self._on_hand_model_changed)
         stream_row.addWidget(self._rb_hand_m)
         stream_row.addWidget(self._rb_hand_s)
+
+        # The GUI usually comes up before manus_tesollo, so poll until the node
+        # answers, then stop. Without this the radio just shows the launch
+        # default and would sit on S while the node actually drives an M.
+        self._hand_model_synced = False
+        self._t_hand_model = QTimer(self)
+        self._t_hand_model.setInterval(3000)
+        self._t_hand_model.timeout.connect(self._sync_hand_model)
+        self._t_hand_model.start()
+        self._sync_hand_model()
 
         self._btn_pause = QPushButton('⏸ Pause Stream')
         self._btn_pause.setCheckable(True)
@@ -363,6 +404,27 @@ class ManusDeltoGuiWindow(QWidget):
     def _on_pause_toggled(self, checked: bool):
         self._node.call_pause(checked)
         self._btn_pause.setText('▶ Resume Stream' if checked else '⏸ Pause Stream')
+
+    def _sync_hand_model(self):
+        """Point the radio at whatever manus_tesollo is actually wired to."""
+        if self._hand_model_synced:
+            self._t_hand_model.stop()
+            return
+
+        def done(ok, model):
+            if not ok or model not in ('m', 's'):
+                return          # node not up yet -- the timer retries
+
+            def _apply():
+                self._hand_model_synced = True
+                self._t_hand_model.stop()
+                # idClicked is user-only, so setChecked won't re-send the
+                # parameter back to the node.
+                (self._rb_hand_s if model == 's' else self._rb_hand_m
+                 ).setChecked(True)
+            self._sig.dispatch.emit(_apply)
+
+        self._node.call_get_hand_model(done)
 
     def _on_hand_model_changed(self, btn_id: int):
         model = 's' if btn_id == 1 else 'm'
