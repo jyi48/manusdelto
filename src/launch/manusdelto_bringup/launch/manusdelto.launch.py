@@ -2,14 +2,24 @@
 
 Starts, on one PC:
   manus_data_publisher (manus_ros2)  -> /manus_glove_0, /manus_glove_1
-  manus_tesollo_node                 -> /{hand_ns}/{lj,rj}_dg_pospid/reference
-  dg5f_driver (ros2_control + PID controllers, vendored from tesollo_ros2)
+  manus_tesollo_node                 -> hand reference topics (see below)
+  dg5f_driver / dg5f_s_driver (ros2_control + PID, vendored from tesollo_ros2)
   manusdelto_gui                     -> Calibrate / Pause Stream / Retarget mode
 
-Use hand_ns to choose which dg5f_driver launch file gets included:
-  dg5f_both  (default) -> dg5f_both_pid_all_controller.launch.py
-  dg5f_left            -> dg5f_left_pid_all_controller.launch.py
-  dg5f_right           -> dg5f_right_pid_all_controller.launch.py
+hand_ns picks which hands, hand_model picks which hardware:
+
+  hand_model:=m (default)          -> dg5f_driver, one namespace for both hands
+    dg5f_both  (default) -> dg5f_both_pid_all_controller.launch.py
+    dg5f_left            -> dg5f_left_pid_all_controller.launch.py
+    dg5f_right           -> dg5f_right_pid_all_controller.launch.py
+    reference: /{hand_ns}/{lj,rj}_dg_pospid/reference
+
+  hand_model:=s                    -> dg5f_s_driver, one namespace per hand
+    dg5f_both            -> both single-hand launches (the S ships no
+                            both-hand launch: left and right share the same
+                            controller and joint names)
+    dg5f_left/dg5f_right -> dg5f_s_{left,right}_pid_all_controller.launch.py
+    reference: /dg5f_s_{left,right}/joint_pospid/reference
 """
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
@@ -34,11 +44,27 @@ def generate_launch_description():
     delto_ip = LaunchConfiguration('delto_ip')
     delto_port = LaunchConfiguration('delto_port')
 
-    is_both = PythonExpression(["'", hand_ns, "' == 'dg5f_both'"])
-    is_left = PythonExpression(["'", hand_ns, "' == 'dg5f_left'"])
-    is_right = PythonExpression(["'", hand_ns, "' == 'dg5f_right'"])
+    # hand_ns picks which hands to bring up; hand_model picks which driver.
+    # The S has no both-hand launch (left and right share controller and joint
+    # names, so they can't live in one namespace) -- "both" runs its two
+    # single-hand launches, each in its own namespace.
+    def _m(side):
+        return PythonExpression(
+            ["'", hand_model, "' != 's' and '", hand_ns, "' == '", side, "'"])
+
+    def _s(side):
+        return PythonExpression(
+            ["'", hand_model, "' == 's' and '", hand_ns, "' in ('", side,
+             "', 'dg5f_both')"])
+
+    is_both = _m('dg5f_both')
+    is_left = _m('dg5f_left')
+    is_right = _m('dg5f_right')
+    is_s_left = _s('dg5f_left')
+    is_s_right = _s('dg5f_right')
 
     dg5f_driver_share = FindPackageShare('dg5f_driver')
+    dg5f_s_driver_share = FindPackageShare('dg5f_s_driver')
 
     return LaunchDescription([
 
@@ -49,12 +75,12 @@ def generate_launch_description():
                         'dg5f_both, dg5f_left, or dg5f_right'),
         DeclareLaunchArgument(
             'hand_model', default_value='m',
-            description='DG5F variant for manus_tesollo: m (hand_ns namespace, '
-                        'lj_/rj_ joints) or s (dg5f_s_left/right namespaces, '
-                        'joint_* names). Also switchable live from the GUI. '
-                        'The S driver itself is launched separately '
-                        '(hw-core launch_dg5f_s.sh) -- this rig only includes '
-                        'the M driver.'),
+            description='DG5F variant: m (dg5f_driver, hand_ns namespace, '
+                        'lj_/rj_ joints) or s (dg5f_s_driver, one namespace '
+                        'per hand, joint_* names). Picks both the driver '
+                        'launched here and how manus_tesollo wires itself; '
+                        'the retarget side is also switchable live from the '
+                        'GUI.'),
         DeclareLaunchArgument(
             'use_ik', default_value='false',
             description='Start manus_tesollo in ik mode (requires pinocchio)'),
@@ -135,6 +161,38 @@ def generate_launch_description():
                         dg5f_driver_share, '/launch/dg5f_right_pid_all_controller.launch.py']),
                     launch_arguments={
                         'delto_ip': delto_ip, 'delto_port': delto_port,
+                    }.items(),
+                ),
+            ],
+        ),
+
+        # ── Hardware: DG5F-S driver (hand_model:=s) ─────────────────────────
+        # One launch per hand, each in its own namespace (dg5f_s_left /
+        # dg5f_s_right). hand_ns:=dg5f_both brings up both. The per-hand IPs
+        # reuse dg5f_left_ip/dg5f_right_ip so both models are configured the
+        # same way; the S launches take them as `delto_ip`.
+        GroupAction(
+            condition=IfCondition(is_s_left),
+            actions=[
+                IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource([
+                        dg5f_s_driver_share,
+                        '/launch/dg5f_s_left_pid_all_controller.launch.py']),
+                    launch_arguments={
+                        'delto_ip': dg5f_left_ip, 'delto_port': dg5f_left_port,
+                    }.items(),
+                ),
+            ],
+        ),
+        GroupAction(
+            condition=IfCondition(is_s_right),
+            actions=[
+                IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource([
+                        dg5f_s_driver_share,
+                        '/launch/dg5f_s_right_pid_all_controller.launch.py']),
+                    launch_arguments={
+                        'delto_ip': dg5f_right_ip, 'delto_port': dg5f_right_port,
                     }.items(),
                 ),
             ],
