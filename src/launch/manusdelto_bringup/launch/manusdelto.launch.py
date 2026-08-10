@@ -74,7 +74,7 @@ def generate_launch_description():
             description='Which dg5f_driver stack to bring up: '
                         'dg5f_both, dg5f_left, or dg5f_right'),
         DeclareLaunchArgument(
-            'hand_model', default_value='m',
+            'hand_model', default_value='s',
             description='DG5F variant: m (dg5f_driver, hand_ns namespace, '
                         'lj_/rj_ joints) or s (dg5f_s_driver, one namespace '
                         'per hand, joint_* names). Picks both the driver '

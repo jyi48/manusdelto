@@ -243,7 +243,7 @@ class ManusDeltoGuiWindow(QWidget):
         stream_row.addWidget(QLabel('Hand:'))
         self._rb_hand_m = QRadioButton('DG5F-M')
         self._rb_hand_s = QRadioButton('DG5F-S')
-        self._rb_hand_m.setChecked(True)
+        self._rb_hand_s.setChecked(True)   # matches the node/launch default
         self._bg_hand_model = QButtonGroup(self)
         self._bg_hand_model.addButton(self._rb_hand_m, 0)
         self._bg_hand_model.addButton(self._rb_hand_s, 1)

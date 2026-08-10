@@ -72,7 +72,7 @@ class ManusTesolloNode(Node):
         self._js_subs = []
         self._names = {}
         self._hand_model = None
-        self._wire_hand_model(_p("hand_model", "m"))
+        self._wire_hand_model(_p("hand_model", "s"))
 
         self.create_subscription(ManusGlove, left_in, self._cb, 10)
         self.create_subscription(ManusGlove, right_in, self._cb, 10)
