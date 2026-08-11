@@ -72,11 +72,21 @@ ERGO_CALIB_PINCH2 = [
     1.0, 1.0, 0.9, 0.9,      # ring
     1.0, 1.0, 0.9, 0.9,      # pinky
 ]
+# Pinch 1 with a deeper thumb PIP (1_3) and a pinky that curls further
+# (5_2, 5_4) -- tuned on the DG5F-S.
+ERGO_CALIB_PINCH_S = [
+    0.15, 1.60, 1.50, 1.50,  # thumb
+    1.0, 1.10, 1.0, 0.9,     # index
+    0.8, 1.0, 1.0, 0.9,      # middle
+    1.0, 1.0, 0.9, 0.9,      # ring
+    1.0, 1.20, 0.9, 1.10,    # pinky
+]
 # Dropdown label -> calib array. Order here is the dropdown order.
 ERGO_CALIB_PRESETS = {
     'Tuned': ERGO_CALIB_TUNED,
     'Pinch 1': ERGO_CALIB_PINCH1,
     'Pinch 2': ERGO_CALIB_PINCH2,
+    'Pinch-S': ERGO_CALIB_PINCH_S,
 }
 ERGO_CALIB_FINGERS = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky']
 
