@@ -108,6 +108,75 @@ _JOINT_NAMES = {
     "right": [f"rj_dg_{f}_{j}" for f in range(1, 6) for j in range(1, 5)],
 }
 
+# DG5F-S limits, positional (index 0..19), same 5x4 order as the M.
+#
+# The S reaches less far than the M in six places per side, so the M table
+# commands past the mechanical stop -- 27 deg on the thumb MCP, 20 deg on the
+# index spread. The PID sends position error straight out as effort and nothing
+# anywhere cuts on temperature, so a joint parked past its stop just draws
+# stall current until the motor gives up. Marked entries are where the S is the
+# tighter of the two.
+#
+# These are the M limits INTERSECTED with dg5f_s_description's URDF, not the
+# URDF alone: the raw URDF opens PIP/DIP to +-90 deg, and it is the curl-only
+# lower bound that stops fingers bending backwards (see module docstring).
+S_JOINT_LIMITS = {
+    "left": [
+        # finger 1 (thumb):  _1 spread, _2 MCP, _3 PIP, _4 DIP
+        (-51 * DEG2RAD, 0 * DEG2RAD),
+        (0 * DEG2RAD, 153 * DEG2RAD),    # S tighter (M: 180)
+        (-90 * DEG2RAD, 0 * DEG2RAD),
+        (-90 * DEG2RAD, 0 * DEG2RAD),
+        # finger 2 (index)
+        (-15 * DEG2RAD, 24 * DEG2RAD),   # S tighter (M: -35)
+        (0 * DEG2RAD, 115 * DEG2RAD),
+        (0 * DEG2RAD, 90 * DEG2RAD),
+        (0 * DEG2RAD, 90 * DEG2RAD),
+        # finger 3 (middle)
+        (-35 * DEG2RAD, 33 * DEG2RAD),   # S tighter (M: 35)
+        (0 * DEG2RAD, 112 * DEG2RAD),
+        (0 * DEG2RAD, 90 * DEG2RAD),
+        (0 * DEG2RAD, 90 * DEG2RAD),
+        # finger 4 (ring)
+        (-24 * DEG2RAD, 12 * DEG2RAD),   # S tighter (M: 35)
+        (0 * DEG2RAD, 109 * DEG2RAD),
+        (0 * DEG2RAD, 90 * DEG2RAD),
+        (0 * DEG2RAD, 90 * DEG2RAD),
+        # finger 5 (pinky)
+        (-60 * DEG2RAD, 0 * DEG2RAD),    # S tighter (M: 1)
+        (-35 * DEG2RAD, 24 * DEG2RAD),
+        (0 * DEG2RAD, 90 * DEG2RAD),
+        (0 * DEG2RAD, 90 * DEG2RAD),
+    ],
+    "right": [
+        # finger 1 (thumb)
+        (0 * DEG2RAD, 51 * DEG2RAD),
+        (-153 * DEG2RAD, 0 * DEG2RAD),   # S tighter (M: -180)
+        (0 * DEG2RAD, 90 * DEG2RAD),
+        (0 * DEG2RAD, 90 * DEG2RAD),
+        # finger 2 (index)
+        (-24 * DEG2RAD, 15 * DEG2RAD),   # S tighter (M: 35)
+        (0 * DEG2RAD, 115 * DEG2RAD),
+        (0 * DEG2RAD, 90 * DEG2RAD),
+        (0 * DEG2RAD, 90 * DEG2RAD),
+        # finger 3 (middle)
+        (-33 * DEG2RAD, 35 * DEG2RAD),   # S tighter (M: -35)
+        (0 * DEG2RAD, 112 * DEG2RAD),
+        (0 * DEG2RAD, 90 * DEG2RAD),
+        (0 * DEG2RAD, 90 * DEG2RAD),
+        # finger 4 (ring)
+        (-12 * DEG2RAD, 24 * DEG2RAD),   # S tighter (M: -35)
+        (0 * DEG2RAD, 109 * DEG2RAD),
+        (0 * DEG2RAD, 90 * DEG2RAD),
+        (0 * DEG2RAD, 90 * DEG2RAD),
+        # finger 5 (pinky)
+        (0 * DEG2RAD, 60 * DEG2RAD),     # S tighter (M: -1)
+        (-24 * DEG2RAD, 35 * DEG2RAD),
+        (0 * DEG2RAD, 90 * DEG2RAD),
+        (0 * DEG2RAD, 90 * DEG2RAD),
+    ],
+}
+
 
 def _clamp(v, lo, hi):
     return lo if v < lo else hi if v > hi else v
@@ -213,6 +282,14 @@ class _SideCalib:
         self.offset = [0.0] * N
         self.calibrated = False
 
+    def set_range(self, dg5f_range_deg):
+        """Retarget onto a different joint span (hand model switch). scale was
+        derived from the old span, so recompute it from the captured poses --
+        otherwise a fist would still be normalised onto the previous hand."""
+        self._range = dg5f_range_deg
+        if self.calibrated:
+            self.finish()
+
     def apply(self, q_deg):
         if not self.calibrated:
             return q_deg
@@ -236,23 +313,37 @@ class _SideCalib:
 class ErgoRetargeter(Retargeter):
     name = "ergo"
 
-    def __init__(self, joint_calib=None, ema_alpha=0.4):
+    def __init__(self, joint_calib=None, ema_alpha=0.4, hand_model="m"):
         self._calib = list(joint_calib) if joint_calib else list(DEFAULT_JOINT_CALIB)
         self._ema = {"left": EMAFilter(ema_alpha), "right": EMAFilter(ema_alpha)}
-        self._limits_arr = {
-            side: [JOINT_LIMITS[side][n] for n in _JOINT_NAMES[side]]
-            for side in ("left", "right")
-        }
-        # DG5F per-joint range (deg) — the span the fist pose is normalised onto.
-        self._range_deg = {
-            side: [(hi - lo) * RAD2DEG for (lo, hi) in self._limits_arr[side]]
-            for side in ("left", "right")
-        }
-        self._rom = {
-            side: _SideCalib(self._range_deg[side]) for side in ("left", "right")
-        }
+        self._hand_model = None
+        self._limits_arr = {}
+        self._range_deg = {}
+        self._rom = {side: _SideCalib([]) for side in ("left", "right")}
+        self.set_hand_model(hand_model)
         self._calib_phase = {"left": 0, "right": 0}  # 0=idle, 1=capturing rest, 2=capturing fist
         self._calib_samples = {"left": [], "right": []}
+
+    def set_hand_model(self, model):
+        """Swap the joint-limit table between the DG5F-M and -S. The S reaches
+        less far in six places per side, and a command past the stop is not a
+        cosmetic error: the PID keeps pushing effort at a gap that never
+        closes, which is stall current with no thermal cutoff behind it."""
+        model = (model or "m").strip().lower()
+        if model not in ("m", "s"):
+            raise ValueError(f"hand_model must be 'm' or 's', got '{model}'")
+        if model == self._hand_model:
+            return
+
+        for side in ("left", "right"):
+            self._limits_arr[side] = (
+                list(S_JOINT_LIMITS[side]) if model == "s"
+                else [JOINT_LIMITS[side][n] for n in _JOINT_NAMES[side]])
+            # Per-joint range (deg) -- the span a fist is normalised onto.
+            self._range_deg[side] = [
+                (hi - lo) * RAD2DEG for (lo, hi) in self._limits_arr[side]]
+            self._rom[side].set_range(self._range_deg[side])
+        self._hand_model = model
 
     def set_calib(self, values):
         """Live-replace the per-joint calibration factors (shared by both

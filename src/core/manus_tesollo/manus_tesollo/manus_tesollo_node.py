@@ -196,6 +196,9 @@ class ManusTesolloNode(Node):
             joint_calib=list(DEFAULT_JOINT_CALIB),
             logger=self.get_logger(),
         )
+        # _wire_hand_model() ran before the retargeters existed, so hand the
+        # model over now; ergo clamps to a different limit table per model.
+        self._retargeters["ergo"].set_hand_model(self._hand_model)
 
         use_ik = (
             self.declare_parameter("use_ik", False).get_parameter_value().bool_value
@@ -399,6 +402,12 @@ class ManusTesolloNode(Node):
         # ramp falls back to the last command until fresh state arrives.
         self._actual = {"left": None, "right": None}
         self._hand_model = model
+        # ergo clamps to per-model joint limits; the S stops short of the M in
+        # six places and commanding past a stop is stall current, not a wrong
+        # pose. Retargeters may not exist yet on the constructor's first call.
+        ergo = getattr(self, "_retargeters", {}).get("ergo")
+        if ergo is not None:
+            ergo.set_hand_model(model)
         self.get_logger().info(
             f"hand_model -> DG5F-{model.upper()}: "
             f"left {self._pubs['left'].topic_name}, "
