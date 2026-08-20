@@ -43,10 +43,17 @@ _MANO_REMAP = {
 }
 _TIP_IDX = (4, 8, 12, 16, 20)
 
-# DG5F command order per side (must match LEFT/RIGHT_JOINT_NAMES in the node).
+# DG5F command order per side and model (must match the node's per-model joint
+# names). The S names both hands identically, hence the same list twice.
 _CMD_JOINTS = {
-    side: [f"{p}j_dg_{f}_{j}" for f in range(1, 6) for j in range(1, 5)]
-    for side, p in (("left", "l"), ("right", "r"))
+    "m": {
+        side: [f"{p}j_dg_{f}_{j}" for f in range(1, 6) for j in range(1, 5)]
+        for side, p in (("left", "l"), ("right", "r"))
+    },
+    "s": {
+        side: [f"joint_{f}_{j}" for f in range(1, 6) for j in range(1, 5)]
+        for side in ("left", "right")
+    },
 }
 
 # Mirror-mode reflection: op2mano[side] already gives the right mirror except
@@ -64,11 +71,13 @@ _MIRROR_REFLECT = {
 class DexRetargeter(Retargeter):
     name = "dex"
 
-    def __init__(self, urdf_dir, logger, config_dir=None, optimizer="dexpilot"):
+    def __init__(self, urdf_dir, logger, config_dir=None, optimizer="dexpilot",
+                 hand_model="m"):
         self._log = logger
         self._last_solve_ms = 0.0
         if config_dir is None:
             config_dir = os.path.join(os.path.dirname(__file__), "configs")
+        self._config_dir = config_dir
         RetargetingConfig.set_default_urdf_dir(urdf_dir)
 
         # 'dexpilot' (tip + pinch prior) or 'vector' (adds MCP->DIP direction
@@ -79,43 +88,41 @@ class DexRetargeter(Retargeter):
         self._optimizer = optimizer
 
         self._op2mano = MANUS_OPERATOR2MANO  # per-hand Manus VUH -> MANO
-        self._mirror_reflect = _MIRROR_REFLECT["none"]
         self._last_frame = {"left": None, "right": None}
         self._retgt = {}
         self._reorder = {}
+        self._hand_model = None
+        self.set_hand_model(hand_model)
+
+    def set_hand_model(self, model):
+        """Rebuild against the attached hand's config. The optimizer bounds are
+        the URDF's joint limits, and the S stops short of the M -- solving on
+        the M file lets dex return a pose past the stop, which the PID then
+        pushes into with nothing cutting on temperature."""
+        model = (model or "m").strip().lower()
+        if model not in ("m", "s"):
+            raise ValueError(f"hand_model must be 'm' or 's', got '{model}'")
+        if model == self._hand_model:
+            return
+
+        prefix = "dg5f_s" if model == "s" else "dg5f"
+        retgt, reorder = {}, {}
         for side in ("left", "right"):
-            cfg = os.path.join(config_dir, f"dg5f_{side}_{optimizer}.yml")
+            cfg = os.path.join(
+                self._config_dir, f"{prefix}_{side}_{self._optimizer}.yml")
             rt = RetargetingConfig.load_from_file(cfg).build()
-            self._retgt[side] = rt
+            retgt[side] = rt
             # Map dex output order (optimizer.target_joint_names) → DG5F cmd order.
             dex_names = list(rt.optimizer.target_joint_names)
-            self._reorder[side] = [dex_names.index(n) for n in _CMD_JOINTS[side]]
-            self._log.info(
-                f"dex[{optimizer}] {side}: {len(dex_names)} target joints"
-            )
-
-    def set_mirror_reflect(self, axis):
-        """Live-set the mirror-mode reflection axis ('none'/'x'/'y'/'z').
-        Only applied when the glove side differs from the robot side."""
-        self._mirror_reflect = _MIRROR_REFLECT.get(str(axis).lower(),
-                                                   _MIRROR_REFLECT["none"])
-
-    def set_scaling(self, value):
-        """Live-adjust the human->robot scale on both sides. optimizer.scaling
-        is a plain attribute read fresh each retarget() call, so this applies
-        on the very next frame -- no rebuild needed."""
-        value = float(value)
-        for rt in self._retgt.values():
-            rt.optimizer.scaling = value
-
-    def set_low_pass_alpha(self, value):
-        """Live-adjust the low-pass filter alpha on both sides (0=frozen,
-        1=raw). Same live-attribute mechanism as set_scaling(); a no-op if a
-        side's config had low_pass_alpha outside [0, 1] (no filter built)."""
-        value = float(value)
-        for rt in self._retgt.values():
-            if rt.filter is not None:
-                rt.filter.alpha = value
+            reorder[side] = [dex_names.index(n) for n in _CMD_JOINTS[model][side]]
+        # Swap in only once both sides built, so a bad config leaves the
+        # previous hand working instead of half-retargeting onto the new one.
+        self._retgt, self._reorder = retgt, reorder
+        self._last_frame = {"left": None, "right": None}
+        self._hand_model = model
+        self._log.info(
+            f"dex[{self._optimizer}] -> DG5F-{model.upper()}: "
+            f"{len(self._reorder['left'])} target joints per side")
 
     def compute(self, msg, q_deg, side):
         rt = self._retgt.get(side)

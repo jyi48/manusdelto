@@ -197,8 +197,12 @@ class ManusTesolloNode(Node):
             logger=self.get_logger(),
         )
         # _wire_hand_model() ran before the retargeters existed, so hand the
-        # model over now; ergo clamps to a different limit table per model.
-        self._retargeters["ergo"].set_hand_model(self._hand_model)
+        # model over now; each retargeter clamps to a different limit source
+        # per model (ergo a table, dex the URDF behind its config).
+        for _rt in self._retargeters.values():
+            _setter = getattr(_rt, "set_hand_model", None)
+            if _setter is not None:
+                _setter(self._hand_model)
 
         use_ik = (
             self.declare_parameter("use_ik", False).get_parameter_value().bool_value
@@ -402,12 +406,14 @@ class ManusTesolloNode(Node):
         # ramp falls back to the last command until fresh state arrives.
         self._actual = {"left": None, "right": None}
         self._hand_model = model
-        # ergo clamps to per-model joint limits; the S stops short of the M in
-        # six places and commanding past a stop is stall current, not a wrong
-        # pose. Retargeters may not exist yet on the constructor's first call.
-        ergo = getattr(self, "_retargeters", {}).get("ergo")
-        if ergo is not None:
-            ergo.set_hand_model(model)
+        # Every retargeter clamps to per-model joint limits -- ergo from its own
+        # table, dex from the URDF its config points at. The S stops short of
+        # the M, and commanding past a stop is stall current, not a wrong pose.
+        # Retargeters may not exist yet on the constructor's first call.
+        for rt in getattr(self, "_retargeters", {}).values():
+            setter = getattr(rt, "set_hand_model", None)
+            if setter is not None:
+                setter(model)
         self.get_logger().info(
             f"hand_model -> DG5F-{model.upper()}: "
             f"left {self._pubs['left'].topic_name}, "
