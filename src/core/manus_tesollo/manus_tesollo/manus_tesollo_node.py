@@ -74,6 +74,12 @@ class ManusTesolloNode(Node):
         self._hand_model = None
         self._wire_hand_model(_p("hand_model", "s"))
 
+        # Who owns the hand reference topic. joint_pospid has no source gate
+        # (MultiDOFCommand carries no header), so two publishers interleave.
+        # 'none' leaves the topic entirely -- pause does not: it keeps
+        # republishing the held pose.
+        self._cmd_source = "glove"
+
         self.create_subscription(ManusGlove, left_in, self._cb, 10)
         self.create_subscription(ManusGlove, right_in, self._cb, 10)
         self.create_subscription(
@@ -231,6 +237,7 @@ class ManusTesolloNode(Node):
         self.declare_parameter("dex_low_pass_alpha", 0.1)
         self.declare_parameter("ergo_calib", list(DEFAULT_JOINT_CALIB))
         self.declare_parameter("mirror_reflect_axis", "x")
+        self.declare_parameter("hand_command_source", self._cmd_source)
         self.add_on_set_parameters_callback(self._on_param_change)
 
         self.get_logger().info(
@@ -341,6 +348,15 @@ class ManusTesolloNode(Node):
                     self._wire_hand_model(p.value)
                 except ValueError as ex:
                     return SetParametersResult(successful=False, reason=str(ex))
+            elif p.name == "hand_command_source":
+                src = (p.value or "").strip().lower()
+                if src not in ("glove", "none"):
+                    return SetParametersResult(
+                        successful=False,
+                        reason=f"hand_command_source must be 'glove' or 'none', got '{p.value}'")
+                self._cmd_source = src
+                self.get_logger().info(f"hand_command_source -> {src}")
+
         return SetParametersResult(successful=True)
 
     def _cb_pause(self, req: SetBool.Request, res: SetBool.Response):
@@ -485,6 +501,12 @@ class ManusTesolloNode(Node):
             self._open_timer = None
 
     def _cb(self, msg: ManusGlove):
+        # Someone else owns the hand (VLA). Before the paused branch, which
+        # would keep republishing and go on fighting. Open-hand still runs from
+        # its own timer -- an explicit operator action.
+        if self._cmd_source != "glove":
+            return
+
         side = (msg.side or "").lower()
         if side not in ("left", "right"):
             self.get_logger().warn(f"unknown side: {side}")
