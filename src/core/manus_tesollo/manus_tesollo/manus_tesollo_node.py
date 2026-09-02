@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import math
 import os
 
 import numpy as np
@@ -15,6 +16,80 @@ from manus_tesollo.retargeters import build_retargeters, DEFAULT_JOINT_CALIB
 
 CALIB_PHASE_SEC = 4.0  # seconds per phase — matches scm_gui's CALIB_DURATION
 _OPEN_RAMP_HZ = 50.0   # ramp update rate for the gentle "open hand"
+
+# Rate-limiter timing guards. dt is measured rather than assumed (the glove
+# stream is nominally 120 Hz but jitters), then clamped: _MIN_DT keeps two
+# messages landing in the same clock tick from freezing the output at a zero
+# step, and _MAX_DT stops a stalled stream from banking up budget and letting
+# the first frame after the gap through unlimited.
+_MIN_DT = 1e-3
+_MAX_DT = 0.05
+# Open-hand ramp: how close to zero counts as open, and a hard stop on the
+# ramp timer so it can never spin forever.
+_OPEN_EPS = 1e-4
+_OPEN_MAX_SEC = 10.0
+
+class _RateLimiter:
+    """Per-joint slew limit on the published reference.
+
+    The DG5F is driven by a P-only position->effort controller (p=1.5, effort
+    command interface), so the reference is not a request, it is an error
+    term: a reference the joint cannot physically reach stays as a standing
+    error, and a standing error is duty. Capping the reference at the joint's
+    own max speed keeps the error -- and so the duty -- bounded by
+    construction.
+
+    This is what the retargeters' EMA never did. An EMA lags a step, it does
+    not bound one: at alpha=0.2 / 120 Hz a 130 deg jump still puts 26 deg out
+    on the very first frame (~3100 deg/s, ~17x the URDF's 3.14 rad/s), which
+    is a full-duty command. The node used to have no rate limiter on the
+    grounds that "ergo and ik clamp to their own joint limits and smooth via
+    EMA" -- clamping bounds where a command may go, not how fast it gets
+    there.
+
+    Non-finite values are dropped here too. This is the last stage before
+    publish, so it holds for every retargeter (dex included), not just the
+    ones whose input is sanitised upstream.
+    """
+
+    def __init__(self, max_speed):
+        self.max_speed = max_speed
+        self._prev = None
+        self._t = None
+
+    def seeded(self):
+        return self._prev is not None
+
+    def reset(self, vals=None):
+        self._prev = list(vals) if vals is not None else None
+        self._t = None
+
+    def limit(self, vals, now):
+        if self._prev is None or len(self._prev) != len(vals):
+            # Nothing to limit from -- seed on this frame and pass through.
+            self._prev = [v if math.isfinite(v) else 0.0 for v in vals]
+            self._t = now
+            return list(self._prev)
+        if self._t is None:
+            # Seeded by reset() (from the measured pose) but with no timebase
+            # yet. Hold for one frame rather than invent a dt.
+            self._t = now
+            return list(self._prev)
+        dt = min(max(now - self._t, _MIN_DT), _MAX_DT)
+        self._t = now
+        step = self.max_speed * dt
+        out = []
+        for v, prev in zip(vals, self._prev):
+            if not math.isfinite(v):
+                out.append(prev)          # hold, never publish NaN/inf
+            elif v - prev > step:
+                out.append(prev + step)
+            elif prev - v > step:
+                out.append(prev - step)
+            else:
+                out.append(v)
+        self._prev = out
+        return out
 
 try:
     from manus_tesollo.dg5f_kinematics import DG5FKinematics
@@ -72,6 +147,17 @@ class ManusTesolloNode(Node):
         self._js_subs = []
         self._names = {}
         self._hand_model = None
+
+        # limit (3.14 rad/s): a reference faster than the joint can track is a
+        # standing error, and this controller turns error straight into duty.
+        # Declared before _wire_hand_model() -- that call builds the limiters.
+        self._max_joint_speed = (
+            self.declare_parameter("max_joint_speed", math.pi)
+            .get_parameter_value().double_value
+        )
+        if self._max_joint_speed <= 0.0:
+            raise ValueError(
+                f"max_joint_speed must be > 0, got {self._max_joint_speed}")
         self._wire_hand_model(_p("hand_model", "s"))
 
         # Who owns the hand reference topic. joint_pospid has no source gate
@@ -357,6 +443,17 @@ class ManusTesolloNode(Node):
                 self._cmd_source = src
                 self.get_logger().info(f"hand_command_source -> {src}")
 
+            elif p.name == "max_joint_speed":
+                if p.value <= 0.0:
+                    return SetParametersResult(
+                        successful=False,
+                        reason=f"max_joint_speed must be > 0, got {p.value}",
+                    )
+                self._max_joint_speed = p.value
+                for lim in self._rate.values():
+                    lim.max_speed = p.value
+                self.get_logger().info(f"max_joint_speed -> {p.value} rad/s")
+
         return SetParametersResult(successful=True)
 
     def _cb_pause(self, req: SetBool.Request, res: SetBool.Response):
@@ -421,6 +518,8 @@ class ManusTesolloNode(Node):
         # Measured poses belong to the previous hand -- drop them so an open-hand
         # ramp falls back to the last command until fresh state arrives.
         self._actual = {"left": None, "right": None}
+        self._rate = {si: _RateLimiter(self._max_joint_speed)
+                      for si in ("left", "right")}
         self._hand_model = model
         # Every retargeter clamps to per-model joint limits -- ergo from its own
         # table, dex from the URDF its config points at. The S stops short of
@@ -443,13 +542,29 @@ class ManusTesolloNode(Node):
                 self._actual[side] = [float(pos[n]) for n in names]
 
     def _publish_vals(self, side, vals):
+        """The only place this node publishes a hand reference. Everything
+        goes through the rate limiter here, so no path -- glove, paused hold,
+        open-hand ramp -- can emit a step the joint cannot follow. Returns
+        what actually went out, which is what callers must remember as the
+        last command."""
         names = self._names[side]
         pub = self._pubs[side]
+        vals = self._limit(side, vals)
         out = MultiDOFCommand()
         out.dof_names = names
         out.values = list(vals)
         out.values_dot = [0.0] * len(names)
         pub.publish(out)
+        return vals
+
+    def _limit(self, side, vals):
+        """Seed from the measured pose when we have one, so the first command
+        after start-up is limited from where the hand actually is rather than
+        passing through unbounded."""
+        lim = self._rate[side]
+        if not lim.seeded() and self._actual[side] is not None:
+            lim.reset(self._actual[side])
+        return lim.limit(vals, self.get_clock().now().nanoseconds * 1e-9)
 
     def _srv_open_hand(self, req: Trigger.Request, res: Trigger.Response):
         # Ramp both hands from their current pose to all-zeros (open) over
@@ -463,15 +578,26 @@ class ManusTesolloNode(Node):
             else list(self._prev_vals[side])
             for side in ("left", "right")
         }
+        # _open_start is the best pose estimate we have (measured, else last
+        # command), so seed an unseeded limiter from it -- otherwise the ramp's
+        # first frame is the one thing that escapes the slew limit.
+        for side in ("left", "right"):
+            if not self._rate[side].seeded():
+                self._rate[side].reset(self._open_start[side])
         if self._open_timer is not None:
             self._open_timer.cancel()
+        # Always ramp on the timer, open_ramp_sec = 0 included. A one-shot
+        # publish of zeros would now be clipped by the rate limiter and leave
+        # the hand part-way open; and an instant snap from a curled pose is
+        # the same full-duty step this limiter exists to stop, so "instant"
+        # is served as "as fast as max_joint_speed allows".
+        self._open_t0 = self.get_clock().now()
+        self._opening = True
+        self._open_timer = self.create_timer(1.0 / _OPEN_RAMP_HZ, self._on_open_tick)
         if self._open_ramp_sec <= 0.0:
-            self._finish_open()
-            res.message = "hand opened (zeros, instant); stream paused"
+            res.message = ("opening hand at the rate limit "
+                           f"({self._max_joint_speed:.2f} rad/s); stream paused")
         else:
-            self._open_t0 = self.get_clock().now()
-            self._opening = True
-            self._open_timer = self.create_timer(1.0 / _OPEN_RAMP_HZ, self._on_open_tick)
             res.message = (f"opening hand over {self._open_ramp_sec:.1f}s; "
                            "stream paused -- resume to teleop")
         res.success = True
@@ -481,12 +607,18 @@ class ManusTesolloNode(Node):
     def _on_open_tick(self):
         elapsed = (self.get_clock().now() - self._open_t0).nanoseconds * 1e-9
         t = min(1.0, elapsed / self._open_ramp_sec) if self._open_ramp_sec > 0 else 1.0
+        arrived = True
         for side in ("left", "right"):
             start = self._open_start[side]
             vals = [(1.0 - t) * start[i] for i in range(len(start))]  # target = 0
-            self._prev_vals[side] = list(vals)
-            self._publish_vals(side, vals)
-        if t >= 1.0:
+            # Track what went out, not what we asked for: the rate limiter may
+            # be holding the ramp back, and stopping on t alone would park the
+            # hand part-way open.
+            sent = self._publish_vals(side, vals)
+            self._prev_vals[side] = sent
+            if any(abs(v) > _OPEN_EPS for v in sent):
+                arrived = False
+        if (t >= 1.0 and arrived) or elapsed > _OPEN_MAX_SEC:
             self._finish_open()
 
     def _finish_open(self):
