@@ -7,11 +7,13 @@
 #include <vector>
 #include <memory>
 #include <deque>
+#include <unordered_map>
 
 #include "rclcpp/rclcpp.hpp"
 #include "manus_ros2_msgs/msg/manus_ergonomics.hpp"
 #include "manus_ros2_msgs/msg/manus_glove.hpp"
 #include "manus_ros2_msgs/msg/manus_raw_node.hpp"
+#include "manus_ros2_msgs/msg/manus_vibration_command.hpp"
 
 /// @brief The type of connection to core.
 enum class ConnectionType : int
@@ -95,9 +97,15 @@ public:
     void PublishCallback();
 
 
+    
 protected:
     ClientReturnCode Connect();
 
+    std::string format_topic(std::string templ,
+                                uint32_t glove_id,
+                                size_t index,
+                                const std::string& side);
+    
     std::string SideToString(Side p_Side);
 
     std::string JointTypeToString(FingerJointType p_FingerJointType);
@@ -107,6 +115,14 @@ protected:
     Side ErgonomicsDataTypeToSide(ErgonomicsDataType p_ErgonomicsDataType);
 
     std::string ErgonomicsDataTypeToString(ErgonomicsDataType p_ErgonomicsDataType);
+
+    // Helper to (re)create vibration subscribers for all known gloves
+    void UpdateVibrationSubscribers();
+    
+    // Callback for vibration command
+    void OnVibrationCommand(const manus_ros2_msgs::msg::ManusVibrationCommand::SharedPtr msg, uint32_t glove_id);
+    
+    GloveLandscapeData GetGloveLandscapeData(uint32_t p_GloveID);
 
     static ManusDataPublisher *s_Instance;
     
@@ -140,11 +156,20 @@ protected:
     std::vector<GestureLandscapeData> m_NewGestureLandscapeData;
     std::vector<GestureLandscapeData> m_GestureLandscapeData;
     
+    // Vibration command subscribers, mapped by glove_id
+    std::map<uint32_t, rclcpp::Subscription<manus_ros2_msgs::msg::ManusVibrationCommand>::SharedPtr> m_VibrationSubscribers;
+    
     // MANUS message publishers
     rclcpp::TimerBase::SharedPtr m_PublishTimer;
     
     std::map<uint32_t, int> m_PublishCountMap;
     std::chrono::steady_clock::time_point m_LastLogTime;
+
+    std::string glove_topic_template_;  // e.g. "manus/gloves/{glove_id}"
+    std::string vibration_suffix_;      // e.g. "vibration_cmd"
+    std::unordered_map<uint32_t, std::string> m_GloveSide; // glove_id -> "Left"/"Right"
+
+
 };
 
 #endif

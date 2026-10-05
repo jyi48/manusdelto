@@ -38,19 +38,21 @@ CALIB_PHASE_MSGS = {
 
 # Must match manus_tesollo_node's declared defaults (dex_scaling_factor,
 # dex_low_pass_alpha, mirror_reflect_axis) and retargeters/ergo.py's
-# DEFAULT_JOINT_CALIB. Hardware-tuned on this bench rig (2026-07-07).
+# DEFAULT_JOINT_CALIB. The dex values were hardware-tuned on this bench rig
+# (2026-07-07); the ergo default is neutral (1.0) since ManusSDK 3.2.1.
 DEX_SCALING_DEFAULT = 1.1
 DEX_LOW_PASS_ALPHA_DEFAULT = 0.1
 MIRROR_AXIS_DEFAULT = 'x'
-ERGO_CALIB_DEFAULT = [
+ERGO_CALIB_DEFAULT = [1.0] * 20
+# Presets below were made against the old SDK's ergonomics and are kept for
+# comparison until retuned. Tesollo ref was the ergo default before 3.2.1.
+ERGO_CALIB_TESOLLO_REF = [
     1.0, 1.6, 1.3, 1.3,   # thumb
     1.0, 1.0, 1.3, 1.7,   # index
     1.0, 1.0, 1.3, 1.7,   # middle
     1.0, 1.0, 1.3, 1.7,   # ring
     1.0, 1.0, 1.0, 1.0,   # pinky
 ]
-# Hardware-tuned presets (2026-07-07/09), selectable alongside the Tesollo
-# reference default above via the Preset dropdown.
 ERGO_CALIB_TUNED = [
     1.75, 1.0, 1.3, 2.0,  # thumb
     1.0, 1.2, 1.3, 1.3,   # index
@@ -83,7 +85,9 @@ ERGO_CALIB_PINCH_S = [
 ]
 # Dropdown label -> calib array. Order here is the dropdown order.
 ERGO_CALIB_PRESETS = {
-    'Tuned': ERGO_CALIB_TUNED,
+    'Default': ERGO_CALIB_DEFAULT,
+    'Tuned (SDK < 3.2.1)': ERGO_CALIB_TUNED,
+    'Tesollo ref (SDK < 3.2.1)': ERGO_CALIB_TESOLLO_REF,
     'Pinch 1': ERGO_CALIB_PINCH1,
     'Pinch 2': ERGO_CALIB_PINCH2,
     'Pinch-S': ERGO_CALIB_PINCH_S,

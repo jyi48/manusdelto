@@ -5,6 +5,17 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+# Determine target architecture for ManusSDK library selection
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|ARM64")
+  set(MANUS_ARCH "aarch64")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+  set(MANUS_ARCH "amd64")
+else()
+  message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
+endif()
+
+message(STATUS "Building for architecture: ${MANUS_ARCH}")
+
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -20,22 +31,18 @@ target_include_directories(manus_data_publisher PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
   ${CMAKE_CURRENT_SOURCE_DIR}/../../../ManusSDK/include)
-target_link_directories(manus_data_publisher PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../../ManusSDK/lib/)
+target_link_directories(manus_data_publisher PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../../ManusSDK/lib/${MANUS_ARCH}/)
 
-#Use the following line if you are using the integrated version of the SDK and haven't installed the GRPC / Protobuf dependencies needed for remote connection
-target_link_libraries(manus_data_publisher ManusSDK_Integrated ncurses)
-#target_link_libraries(manus_data_publisher ManusSDK ncurses)
+target_link_libraries(manus_data_publisher ManusSDK-${MANUS_ARCH} ncurses)
 
 target_compile_features(manus_data_publisher PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
 
 install(TARGETS manus_data_publisher
   DESTINATION lib/${PROJECT_NAME})
 
-set(LIBRARY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../ManusSDK/lib)
+set(LIBRARY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../ManusSDK/lib/${MANUS_ARCH})
 
-#Use the following line if you are using the integrated version of the SDK and haven't installed the GRPC / Protobuf dependencies needed for remote connection
-set(LIBRARY_FILE ${LIBRARY_DIR}/libManusSDK_Integrated.so)
-#set(LIBRARY_FILE ${LIBRARY_DIR}/libManusSDK.so)
+set(LIBRARY_FILE ${LIBRARY_DIR}/libManusSDK-${MANUS_ARCH}.so)
 
 install(FILES ${LIBRARY_FILE} DESTINATION lib/${PROJECT_NAME})
 

@@ -9,7 +9,8 @@
 - C++17 ROS2 노드. Manus SDK의 5개 콜백 (skeleton/raw device data/ergonomics/landscape)을 구독해 메시지화
 - **`ConnectionType_Integrated`** 모드 — Manus Core 없이 단독 사용 (gRPC dep 불필요)
 - 손에 연결된 모든 glove를 발견 후 각 glove마다 `/manus_glove_<idx>` 토픽으로 발행
-- ManusSDK 바이너리(`libManusSDK_Integrated.so`)가 **워크스페이스 루트의 `ManusSDK/`에 수동 복사** 필요
+- ManusSDK 3.2.1이 **레포에 포함**(`manusdelto/ManusSDK/`) — 수동 복사 불필요. CMake가 빌드 호스트 아키텍처(`amd64`/`aarch64`)로 라이브러리를 고른다
+- 글러브마다 진동 명령을 구독(`/manus_glove_<idx>/vibration_cmd`) — 햅틱 글러브에만 적용
 
 ---
 
@@ -27,7 +28,7 @@ src/input/manus_ros2/
     ├── ClientLogging.hpp                         로깅 매크로
     ├── ClientPlatformSpecific.{hpp,cpp}          OS별 init/shutdown 헬퍼
     ├── ClientPlatformSpecificTypes.hpp           플랫폼별 타입
-    ├── ManusDataPublisher.{hpp,cpp}              메인 클래스 (~673줄)
+    ├── ManusDataPublisher.{hpp,cpp}              메인 클래스 (~902줄)
     └── manus_data_publisher.cpp                  엔트리포인트 (13줄)
 ```
 
@@ -37,21 +38,21 @@ src/input/manus_ros2/
 
 ### 3.1 ManusSDK 바이너리 배치 (필수)
 
-ManusSDK는 git에 없는 바이너리. 워크스페이스 루트에:
+ManusSDK 3.2.1은 레포에 포함돼 있다(바이너리가 아키텍처별 약 18MB로 줄어 GitHub 100MB 제한 아래). 워크스페이스 루트:
 
 ```
-teleop/
+manusdelto/
 └── ManusSDK/
     ├── include/
     │   ├── ManusSDK.h
     │   ├── ManusSDKTypeInitializers.h
     │   └── ManusSDKTypes.h
     └── lib/
-        ├── libManusSDK_Integrated.so       (Integrated 모드용 — 본 패키지 기본)
-        └── libManusSDK.so                  (Remote 모드용 — gRPC 필요, 미사용)
+        ├── amd64/libManusSDK-amd64.so
+        └── aarch64/libManusSDK-aarch64.so
 ```
 
-Manus 개발자 포털에서 다운로드 또는 다른 머신에서 복사.
+3.2.1부터 Integrated/Remote 두 라이브러리가 아키텍처별 하나로 합쳐졌다(`ConnectionType_Integrated`와 `CoreSdk_InitializeIntegrated`는 그대로). SDK를 올릴 때는 벤더 배포본의 `ROS2 package/ManusSDK/`를 그대로 덮어쓴다.
 
 ### 3.2 시스템 의존성
 
@@ -62,12 +63,12 @@ sudo apt install libncurses-dev    # CMake가 ncurses link
 ### 3.3 빌드
 
 ```bash
-cd teleop
+cd manusdelto
 colcon build --packages-select manus_ros2
 source install/setup.bash
 ```
 
-빌드 후 `libManusSDK_Integrated.so`도 `install/manus_ros2/lib/manus_ros2/`에 복사됨 (RPATH `$ORIGIN`).
+빌드 후 `libManusSDK-<arch>.so`도 `install/manus_ros2/lib/manus_ros2/`에 복사됨 (RPATH `$ORIGIN`).
 
 ### 3.4 실행
 
@@ -87,7 +88,7 @@ ros2 run manus_ros2 manus_data_publisher --ros-args \
 [Hardware] Manus Prime X Haptic glove (USB dongle)
               │
               ▼
-       ManusSDK_Integrated.so  (C ABI)
+       libManusSDK-<arch>.so  (C ABI)
               │ (5개 callback)
               ▼
     ManusDataPublisher (rclcpp::Node + SDKClientPlatformSpecific)
@@ -167,7 +168,17 @@ Manus → ROS 좌표 변환은 SDK가 처리. 본 노드는 이 설정만 전달
 | `/manus_glove_1` | 동일 | 두 번째 |
 | ... | | 더 많은 glove 연결 시 |
 
-`manus_inspire` 노드는 `0`과 `1` 둘 다 구독. `msg.side`로 좌/우 식별.
+`manus_tesollo`는 `0`과 `1` 둘 다 구독. `msg.side`로 좌/우 식별.
+
+구독 토픽(glove 발견 시 생성):
+
+| 토픽 | 타입 | 의미 |
+|---|---|---|
+| `/manus_glove_<idx>/vibration_cmd` | `manus_ros2_msgs/ManusVibrationCommand` | 손가락별 진동 `intensities[5]` (엄지→새끼), 0~1로 클램프. 햅틱 글러브가 아니면 무시 |
+
+노드 종료 시 모든 햅틱 글러브에 0 진동을 보내 멈춘다.
+
+토픽 이름은 `glove_topic_template`(기본 `manus_glove_{index}`, `{glove_id}`/`{index}`/`{side}` 치환)과 `vibration_suffix`(기본 `vibration_cmd`) 파라미터로 바꿀 수 있다. 기본값이 기존 이름과 같아 구독자는 그대로 동작한다.
 
 ### 6.2 파라미터
 
@@ -194,9 +205,9 @@ ID는 단순 매핑용 (`msg.side` 결정). Manus SDK는 자체적으로 glove �
 
 ## 8. 흔한 함정
 
-- **ManusSDK 누락**: `ManusSDK/lib/libManusSDK_Integrated.so` 또는 `ManusSDK/include/ManusSDK.h` 없으면 CMake error. §3.1 절차로 복사.
+- **ManusSDK 누락**: `ManusSDK/lib/<arch>/libManusSDK-<arch>.so` 또는 `ManusSDK/include/ManusSDK.h` 없으면 CMake error. 레포에 포함돼 있으니 `git status`로 지워지지 않았는지 확인.
+- **Unsupported architecture**: CMake가 `amd64`/`aarch64` 외 아키텍처면 멈춘다(벤더 SDK가 두 가지만 제공).
 - **빌드는 되는데 런타임에 SDK 못 찾음**: RPATH `$ORIGIN`이 설정되어 있으나 install/share/lib 구조가 깨졌으면 fail. `colcon build`를 source 디렉토리에서 한 번 더 시도.
-- **gRPC missing 에러**: Remote 모드 SDK를 사용 중. CMakeLists에서 `ManusSDK_Integrated` 확인 (기본).
 - **glove 발견 안 됨**: dongle USB 연결 + Manus glove pairing 확인. ncurses 화면에서 자체 진단 로그 확인.
 - **glove ID 불일치**: `gloves.yaml`의 ID는 시각적 매핑용. 다른 dongle 사용 시 갱신.
 - **`s_Instance` static**: 단일 노드 인스턴스만 가능 (콜백이 static). 한 프로세스에 여러 ManusDataPublisher 불가.
@@ -216,14 +227,14 @@ ID는 단순 매핑용 (`msg.side` 결정). Manus SDK는 자체적으로 glove �
 
 ### 9.3 Remote 모드 (Manus Core 사용)
 1. ManusCore 설치 + 실행
-2. `CMakeLists.txt`에서 `ManusSDK_Integrated` → `ManusSDK`로 변경
-3. `m_ConnectionType = ConnectionType_Local` 또는 `Remote` (IP 설정)
-4. gRPC dependency 설치
+2. `m_ConnectionType = ConnectionType_Local` 또는 `Remote` (IP 설정)
+
+3.2.1부터 Remote 전용 라이브러리가 따로 없다(통합). 이전처럼 CMakeLists에서 라이브러리를 바꿀 필요는 없지만, 통합 라이브러리로 Remote가 추가 의존성 없이 되는지는 확인하지 않았다.
 
 ---
 
 ## 10. 연관 패키지
 
-- `manus_ros2_msgs` (msgs) — `ManusGlove`, `ManusErgonomics`, `ManusRawNode` 정의
-- `manus_inspire` (core) — `/manus_glove_*` 유일한 구독자
+- `manus_ros2_msgs` (msgs) — `ManusGlove`, `ManusErgonomics`, `ManusRawNode`, `ManusVibrationCommand` 정의
+- `manus_tesollo` (core) — `/manus_glove_*` 구독자 (ergonomics 키 이름은 `manus_ros2_msgs/DEVELOPER.ko.md` 참조 — 3.2.1에서 엄지 키가 바뀌었다)
 - 외부: ManusSDK 바이너리, ncurses

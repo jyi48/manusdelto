@@ -41,14 +41,10 @@ _LEFT_DIRECTIONS = [
     -1, 1, 1, 1,
 ]
 
-# Per-joint calibration factors. Tesollo reference default.
-DEFAULT_JOINT_CALIB = [
-    1.0, 1.6, 1.3, 1.3,
-    1.0, 1.0, 1.3, 1.7,
-    1.0, 1.0, 1.3, 1.7,
-    1.0, 1.0, 1.3, 1.7,
-    1.0, 1.0, 1.0, 1.0,
-]
+# Per-joint calibration factors. Neutral (1.0) since ManusSDK 3.2.1: earlier
+# tuning was made against the old SDK's ergonomics and is kept as a GUI preset
+# (manusdelto_gui) rather than as the default.
+DEFAULT_JOINT_CALIB = [1.0] * N
 
 # Joint limits (rad). Values come from the DG5F URDF, but the flex joints
 # (MCP/PIP/DIP) have their lower bound pinned to 0 so fingers can't bend

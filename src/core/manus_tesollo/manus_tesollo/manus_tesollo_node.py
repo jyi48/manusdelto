@@ -666,10 +666,10 @@ class ManusTesolloNode(Node):
             return
 
         q_deg = [
-            ergo.get("ThumbMCPSpread", 0.0),
+            ergo.get("ThumbSpread", 0.0),
+            ergo.get("ThumbCMCStretch", 0.0),
             ergo.get("ThumbMCPStretch", 0.0),
-            ergo.get("ThumbPIPStretch", 0.0),
-            ergo.get("ThumbDIPStretch", 0.0),
+            ergo.get("ThumbIPStretch", 0.0),
 
             ergo.get("IndexSpread", 0.0),
             ergo.get("IndexMCPStretch", 0.0),
