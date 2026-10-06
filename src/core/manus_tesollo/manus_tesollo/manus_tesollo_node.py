@@ -128,9 +128,13 @@ class ManusTesolloNode(Node):
                 self.declare_parameter(name, default).get_parameter_value().string_value
             )
 
-        self._hand_ns = _p("hand_ns", "dg5f_both")          # DG5F-M (both hands)
-        self._s_left_ns = _p("s_left_hand_ns", "dg5f_s_left")    # DG5F-S, per hand
-        self._s_right_ns = _p("s_right_hand_ns", "dg5f_s_right")
+        # One driver namespace per hand, for both models.
+        self._ns = {
+            "m": {"left": _p("m_left_hand_ns", "dg5f_left"),
+                  "right": _p("m_right_hand_ns", "dg5f_right")},
+            "s": {"left": _p("s_left_hand_ns", "dg5f_s_left"),
+                  "right": _p("s_right_hand_ns", "dg5f_s_right")},
+        }
         left_in = _p("left_input_topic", "/manus_glove_0")
         right_in = _p("right_input_topic", "/manus_glove_1")
         # Empty = derive the reference topic from hand_model; a non-empty value
@@ -474,31 +478,22 @@ class ManusTesolloNode(Node):
             return
 
         if model == "s":
-            # Both S hands publish the SAME joint names in different
-            # namespaces, so each joint_states topic is tagged with its side.
-            # Matching by name here would let the left hand's state also land
-            # in _actual["right"] and ramp open-hand from the wrong pose.
             names = list(S_JOINT_NAMES)
             self._names = {"left": names, "right": list(names)}
-            out = {
-                "left": f"/{self._s_left_ns}/joint_pospid/reference",
-                "right": f"/{self._s_right_ns}/joint_pospid/reference",
-            }
-            js = [
-                (("left",), f"/{self._s_left_ns}/joint_states"),
-                (("right",), f"/{self._s_right_ns}/joint_states"),
-            ]
+            ctrl = {"left": "joint_pospid", "right": "joint_pospid"}
         else:
             self._names = {
                 "left": list(LEFT_JOINT_NAMES),
                 "right": list(RIGHT_JOINT_NAMES),
             }
-            out = {
-                "left": f"/{self._hand_ns}/lj_dg_pospid/reference",
-                "right": f"/{self._hand_ns}/rj_dg_pospid/reference",
-            }
-            # One broadcaster carries both hands; lj_/rj_ prefixes separate them.
-            js = [(("left", "right"), f"/{self._hand_ns}/joint_states")]
+            ctrl = {"left": "lj_dg_pospid", "right": "rj_dg_pospid"}
+        ns = self._ns[model]
+        out = {s: f"/{ns[s]}/{ctrl[s]}/reference" for s in ("left", "right")}
+        # Each joint_states topic is tagged with its side. The S names both
+        # hands identically, so matching by name would let the left hand's
+        # state also land in _actual["right"] and ramp open-hand from the
+        # wrong pose.
+        js = [((s,), f"/{ns[s]}/joint_states") for s in ("left", "right")]
 
         for side in ("left", "right"):
             if self._pubs[side] is not None:

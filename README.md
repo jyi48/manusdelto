@@ -7,7 +7,7 @@ on one PC.
 ```
 Manus glove --(ManusSDK)--> manus_data_publisher --(ManusGlove msg)--> manus_tesollo_node
                                                                             |
-                                                           /{hand_ns}/{lj,rj}_dg_pospid/reference
+                                              /dg5f_{left,right}/{lj,rj}_dg_pospid/reference (M)
                                                                             v
                                                             dg5f_driver (ros2_control, Modbus TCP)
                                                                             v
@@ -54,20 +54,25 @@ Test-rig defaults (override via launch args if your setup differs):
 
 | Hand | IP |
 |---|---|
-| Left | `192.168.1.151` |
-| Right | `192.168.1.152` |
+| Left | `169.254.186.73` |
+| Right | `169.254.186.72` |
 
 ## Launch
 
+Both models run one driver per hand, each in its own namespace
+(M: `dg5f_left` / `dg5f_right`, S: `dg5f_s_left` / `dg5f_s_right`).
+
 ```bash
-# Both hands (default)
+./launch_m.sh            # DG5F-M, both hands
+./launch_s.sh left       # DG5F-S, left hand only
+
+# Both hands, DG5F-S (default)
 ros2 launch manusdelto_bringup manusdelto.launch.py
 
 # Single hand
-ros2 launch manusdelto_bringup manusdelto.launch.py hand_ns:=dg5f_left delto_ip:=192.168.1.151
-ros2 launch manusdelto_bringup manusdelto.launch.py hand_ns:=dg5f_right delto_ip:=192.168.1.152
+ros2 launch manusdelto_bringup manusdelto.launch.py hand_model:=m hands:=right
 
-# Override both-hand IPs
+# Override IPs
 ros2 launch manusdelto_bringup manusdelto.launch.py \
     dg5f_left_ip:=192.168.1.151 dg5f_right_ip:=192.168.1.152
 
@@ -80,10 +85,10 @@ ros2 launch manusdelto_bringup manusdelto.launch.py use_gui:=false
 
 | Argument | Default | Meaning |
 |---|---|---|
-| `hand_ns` | `dg5f_both` | `dg5f_both`, `dg5f_left`, or `dg5f_right` — which `dg5f_driver` launch file to include |
-| `dg5f_left_ip` / `dg5f_left_port` | `192.168.1.151` / `502` | Left hand (used when `hand_ns:=dg5f_both`) |
-| `dg5f_right_ip` / `dg5f_right_port` | `192.168.1.152` / `502` | Right hand (used when `hand_ns:=dg5f_both`) |
-| `delto_ip` / `delto_port` | `192.168.1.151` / `502` | Used when `hand_ns:=dg5f_left` or `dg5f_right` |
+| `hand_model` | `s` | `m` (`dg5f_driver`) or `s` (`dg5f_s_driver`) |
+| `hands` | `both` | `both`, `left`, or `right` |
+| `dg5f_left_ip` / `dg5f_left_port` | `169.254.186.73` / `502` | Left hand |
+| `dg5f_right_ip` / `dg5f_right_port` | `169.254.186.72` / `502` | Right hand |
 | `use_ik` | `false` | Start `manus_tesollo` in `ik` mode instead of `ergo` |
 | `orientation_weight` | `1.0` | IK orientation task weight |
 | `use_gui` | `true` | Launch `manusdelto_gui` |
